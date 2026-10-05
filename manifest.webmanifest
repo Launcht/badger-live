@@ -1,11 +1,11 @@
 {
-  "name": "Badger",
-  "short_name": "Badger",
+  "name": "Wild Mongoo",
+  "short_name": "Wild Mongoo",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "background_color": "#faf6f2",
-  "theme_color": "#faf6f2",
+  "theme_color": "#f153a6",
   "icons": [
     { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
     { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }
