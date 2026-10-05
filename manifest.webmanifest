@@ -3,7 +3,7 @@
   "short_name": "Wild Mongoo",
   "start_url": "./",
   "scope": "./",
-  "display": "standalone",
+  "display": "browser",
   "background_color": "#faf6f2",
   "theme_color": "#f153a6",
   "icons": [
