@@ -212,7 +212,7 @@ function lineRow(l, path, r) {
     ${S.canEdit ? `<button type="button" class="x" data-act="del-line" aria-label="Remove">${X}</button>` : ''}
     ${r && path.startsWith('choices.') ? whenSelect(r, l, path) : ''}
     ${flag ? `<div class="flag">${esc(flag)}</div>` : ''}
-    ${l.sug ? sugMark(/^m-(sourdough|health)/.test(l.measure || '') ? 'Bread at 12 slices a loaf, Tarryn\'s figure.' : l.pack ? 'Ticked for you.' : 'Worked out from how Loyverse had it.') : ''}
+    ${l.sug ? sugMark(/^m-(sourdough|health)/.test(l.measure || '') ? 'Bread in slices. How many slices a loaf is, is set once at the top.' : l.pack ? 'Ticked for you.' : 'Worked out from how Loyverse had it.') : ''}
   </div>`
 }
 
@@ -349,7 +349,7 @@ function measureCard(m) {
   return `<div class="buy" data-key="${esc(m.key)}">
     <div class="b-name">${esc(m.name)}</div>
     <div class="b-eq"><span>${/^\d/.test(m.pack) ? '' : '1 '}${esc(m.pack)} <small>(${esc(price)})</small> =</span>${amount}<span>${esc(plur(Number(m.value), m.unit))}</span>
-      ${isSuggestedMeasure(m) ? sugMark(/^m-(sourdough|health)/.test(m.key) ? 'Tarryn\'s figure: 12 slices a loaf.' : 'My best kitchen guess. Change it if your pack is different.') : ''}</div>
+      ${isSuggestedMeasure(m) ? sugMark(/^m-(sourdough|health)/.test(m.key) ? 'Tarryn\'s figure: most loaves are 22 slices.' : 'My best kitchen guess. Change it if your pack is different.') : ''}</div>
     <details class="m-users"><summary>${users.length} recipe${users.length === 1 ? '' : 's'}</summary><ul>${reads}</ul></details>
   </div>`
 }
