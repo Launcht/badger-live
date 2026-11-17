@@ -11,8 +11,9 @@
 
 // ---------------------------------------------------------------- what may be saved
 
-export const FIELDS = new Set(['name', 'category', 'kind', 'makes', 'needed', 'notes', 'ingredients', 'takeaway', 'choices', 'anything_else'])
-export const UNITS = ['g', 'kg', 'ml', 'L', 'each', 'slice', 'portion', 'part']
+export const FIELDS = new Set(['name', 'category', 'kind', 'makes', 'needed', 'notes', 'ingredients', 'takeaway', 'choices', 'anything_else', 'measure'])
+// 'piece' is a shared kitchen measure (a slice of THIS loaf): only on a line that names its measure
+export const UNITS = ['g', 'kg', 'ml', 'L', 'each', 'slice', 'portion', 'part', 'piece']
 export const UNIT_WORDS = { g: 'g', kg: 'kg', ml: 'ml', L: 'L', each: 'each', slice: 'slice', portion: 'portion', part: 'of one' }
 export const MAKES_UNITS = ['g', 'kg', 'ml', 'L', 'each', 'portion']
 const PRICE_UNITS = ['g', 'ml', 'each', 'slice', 'portion']
@@ -20,6 +21,7 @@ const PRICE_FROM = ['Loyverse', 'Odoo']
 const LIMIT = { name: 120, category: 60, notes: 4000, anything_else: 8000, lines: 60, takeaway: 20, groups: 10, options: 12, optionLines: 10, lineText: 300, qty: 100000 }
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const REF = /^[a-z0-9-]{1,40}$/
+export const MEASURE_KEY = /^m-[a-z0-9-]{1,40}$/
 const LID = /^[A-Za-z0-9_-]{1,24}$/
 
 const ok = (value) => ({ ok: true, value })
@@ -71,8 +73,12 @@ function cleanLine(l) {
     if (typeof l.when !== 'object' || !LID.test(String(l.when.g || '')) || !LID.test(String(l.when.o || ''))) return no(`${name.value}: its "only with" could not be read.`)
     when = { g: String(l.when.g), o: String(l.when.o) }
   }
+  const measure = l.measure == null ? null : String(l.measure)
+  if (measure !== null && !MEASURE_KEY.test(measure)) return no(`${name.value}: its kitchen measure could not be found.`)
+  if (l.unit === 'piece' && !measure) return no(`${name.value}: pick a unit (g, ml, each, slice).`)
   const out = { id: LID.test(String(l.id || '')) ? String(l.id) : newId(), name: name.value, qty, unit: l.unit, item, batch, price, was: side(l.was), flag: side(l.flag) }
   if (when) out.when = when
+  if (measure) out.measure = measure
   return ok(out)
 }
 
@@ -124,6 +130,52 @@ function cleanChoices(v) {
   return ok(out)
 }
 
+// A shared kitchen measure (Tarryn, 17/11/2026): what ONE kitchen unit is, set once for every recipe that uses the item.
+// Kept as she typed it: "1 slice = 0.09 of a loaf" (how 'share') or "1 loaf = 11 slices" (how 'count'), never rounded.
+function cleanMeasure(v) {
+  if (!v || typeof v !== 'object') return no('That measure could not be read.')
+  const unit = text(v.unit, 20, 'Say what the kitchen calls one piece, like slice.')
+  if (!unit.ok) return unit
+  const pack = text(v.pack, 20, 'Say what it comes in, like loaf or bottle.')
+  if (!pack.ok) return pack
+  let how = null
+  let value = null
+  if (v.how != null || (v.value != null && v.value !== '')) {
+    if (v.how !== 'share' && v.how !== 'count') return no('Pick how you want to say it.')
+    value = num(v.value)
+    if (v.how === 'share' && !(Number.isFinite(value) && value > 0 && value <= 1)) return no(`One ${unit.value} must be part of one ${pack.value}: a number above nought and up to 1, like 0.09.`)
+    if (v.how === 'count' && !(Number.isFinite(value) && value >= 1 && value <= 10000)) return no(`How many ${unit.value}s in one ${pack.value}: a number like 11.`)
+    how = v.how
+  }
+  let grams = null
+  if (v.grams != null && v.grams !== '') {
+    grams = num(v.grams)
+    if (!Number.isFinite(grams) || grams <= 0 || grams > LIMIT.qty) return no(`What one ${unit.value} weighs must be a number of grams above nought.`)
+  }
+  return ok({ unit: unit.value, pack: pack.value, how, value, grams })
+}
+
+/** The part of one pack in one kitchen unit (0.09 of a loaf in a slice), or null while it is not set. */
+export function shareOf(m) {
+  if (!m || m.value == null) return null
+  return m.how === 'count' ? 1 / m.value : m.how === 'share' ? m.value : null
+}
+
+/**
+ * A measured line in kitchen units: { n, clean }. A line written as part of a pack (0.09 of a loaf) is divided by what one
+ * slice is; it is clean only when that comes out whole or a half, and otherwise it is flagged, never rounded. A line
+ * written in slices is her number of slices. null while the measure is not set.
+ */
+export function piecesOf(line, m) {
+  if (line.unit === 'piece') return { n: line.qty, clean: true }
+  const share = shareOf(m)
+  if (!share || line.qty == null) return null
+  const n = line.qty / share
+  const halves = n * 2
+  const clean = Math.abs(halves - Math.round(halves)) < 1e-6 && Math.round(halves) > 0
+  return { n: clean ? Math.round(halves) / 2 : n, clean }
+}
+
 /** Check one field's value. Returns { ok, value } with the value cleaned, or { ok: false, problem } in plain words. */
 export function validate(field, value) {
   if (!FIELDS.has(field)) return no('That cannot be changed here.')
@@ -144,6 +196,7 @@ export function validate(field, value) {
     case 'ingredients': return cleanLines(value, LIMIT.lines)
     case 'takeaway': return cleanLines(value, LIMIT.takeaway)
     case 'choices': return cleanChoices(value)
+    case 'measure': return cleanMeasure(value)
   }
   return no('That cannot be changed here.')
 }
@@ -164,6 +217,12 @@ const MEASURE = { g: 'by weight', ml: 'by volume', each: 'each', slice: 'by the 
  */
 export function lineCost(line, ctx, seen = new Set()) {
   if (line.qty == null) return { rand: null, missing: `${line.name}: no amount`, from: null }
+  if (line.unit === 'piece') {
+    const m = line.measure && ctx.measures ? ctx.measures.get(line.measure) : null
+    const share = shareOf(m)
+    if (!share) return { rand: null, missing: `${line.name}: how big one ${m ? m.unit : 'piece'} is not set yet`, from: null }
+    return lineCost({ ...line, qty: line.qty * share, unit: 'part' }, ctx, seen)
+  }
   const b = toBase(line.qty, line.unit)
   if (line.batch) {
     const r = ctx.recipes.get(line.batch)
@@ -266,12 +325,20 @@ export async function handle(req, store) {
   if (!me) return reply(404, { problem: 'This link is not right. Ask Tarryn for it again.' })
   if (req.action === 'open') {
     const all = await store.list()
-    const body = { who: me.who, canEdit: me.edit, recipes: all.recipes, notes: all.notes, items: all.items }
+    const body = { who: me.who, canEdit: me.edit, recipes: all.recipes, notes: all.notes, items: all.items, measures: all.measures || [] }
     if (!me.edit) body.changes = await store.history()
     return reply(200, body)
   }
   if (req.action === 'save' || req.action === 'add') {
     if (!me.edit) return reply(403, { problem: 'This link can look but not change anything.' })
+  }
+  if (req.action === 'save' && req.field === 'measure') {
+    const v = validate('measure', req.value)
+    if (!v.ok) return reply(400, { problem: v.problem })
+    if (!(typeof req.measure === 'string' && MEASURE_KEY.test(req.measure))) return reply(404, { problem: 'That measure could not be found.' })
+    const r = await store.saveMeasure(req.measure, v.value, me.who)
+    if (r.missing) return reply(404, { problem: 'That measure could not be found.' })
+    return reply(200, { at: r.at, changed: r.changed, value: v.value })
   }
   if (req.action === 'save') {
     const field = String(req.field || '')
@@ -299,13 +366,24 @@ export async function handle(req, store) {
 }
 
 /** The store, in memory, answering as the database does (a save and its change line together). For tests. */
-export function memoryStore({ keys, recipes, items = [], notes = '' }) {
+export function memoryStore({ keys, recipes, items = [], notes = '', measures = [] }) {
   const s = {
     recipes: new Map(recipes.map((r) => [r.id, structuredClone(r)])),
+    measures: new Map(measures.map((m) => [m.key, structuredClone(m)])),
+    async saveMeasure(key, value, who) {
+      const m = s.measures.get(key)
+      if (!m) return { missing: true }
+      const at = new Date().toISOString()
+      const before = { unit: m.unit, pack: m.pack, how: m.how ?? null, value: m.value ?? null, grams: m.grams ?? null }
+      if (same(before, value)) return { at, changed: false }
+      s.changes.push({ at, who, recipe: null, measure: key, name: m.name, field: 'measure', before, after: value })
+      Object.assign(m, value)
+      return { at, changed: true }
+    },
     notes,
     changes: [],
     async who(key) { return keys[key] || null },
-    async list() { return { recipes: [...s.recipes.values()], notes: s.notes, items } },
+    async list() { return { recipes: [...s.recipes.values()], notes: s.notes, items, measures: [...s.measures.values()] } },
     async save(id, field, value, who) {
       const at = new Date().toISOString()
       if (id === null) {

@@ -180,3 +180,23 @@ body.view .x, body.view .add { display: none; }
 .l-when { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--slate); }
 .l-when select { flex: 1; }
 .line .flag { grid-column: 1 / -1; }
+
+/* Shared measures and batch sizes at the top (17/11/2026) */
+.shared h2 { margin-top: 24px; }
+.measure { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin-bottom: 10px; }
+.measure h3 { margin: 0 0 4px; font-size: 16px; }
+.measure h3 .n { font-weight: 400; margin-left: 6px; }
+.m-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; font-size: 15px; }
+.m-row input { width: auto; flex: 1 1 80px; min-width: 70px; }
+.m-row .m-share, .m-row .m-count, .m-row .m-grams { flex: 0 1 100px; }
+.m-users { margin-top: 8px; font-size: 14px; }
+.m-users summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; color: var(--accentInk); font-weight: 600; }
+.m-users ul { margin: 0; padding-left: 18px; }
+.m-users li { margin: 4px 0; }
+.m-users a, .size a { color: var(--accentInk); }
+.measure .err { flex-basis: 100%; }
+.size { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.size > a { flex: 1 1 160px; font-weight: 600; }
+.size .row { flex: 1 1 200px; }
+.size .err { flex-basis: 100%; }
+.line .was { grid-column: 1 / -1; font-size: 12px; color: var(--mid); }
