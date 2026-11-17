@@ -189,6 +189,9 @@ export function recipeCost(r, ctx, seen = new Set([r.id])) {
     const usual = g.options.find((o) => o.usual) || g.options[0]
     if (usual) sumLines(usual.lines, ctx, seen, eat)
   }
+  // nothing in it yet is not a cost of nought
+  const lines = (r.ingredients || []).length + (r.choices || []).reduce((a, g) => a + ((g.options.find((o) => o.usual) || g.options[0] || { lines: [] }).lines.length), 0)
+  if (!lines) eat.missing.push(`${r.name}: no ingredients yet`)
   const done = (a) => ({ rand: a.missing.length ? null : a.sum, so_far: a.sum, missing: [...new Set(a.missing)] })
   if (r.kind === 'batch') return { eat: done(eat), away: null }
   const away = { sum: eat.sum, missing: [...eat.missing] }

@@ -86,6 +86,7 @@ const ctx = () => ({ items: S.itemById, recipes: S.byId })
 const fromWords = (c) => (c.from === 'Kitchen items' ? 'kitchen price' : c.from === 'Batch' ? 'from the batch' : `${c.from} price`)
 const lineCostHtml = (l) => {
   const c = lineCost(l, ctx())
+  if (c.rand !== null && c.rand < 0.005) return `under 1c<small>${esc(fromWords(c))}</small>`
   return c.rand !== null ? `${fmtRand(c.rand)}<small>${esc(fromWords(c))}</small>` : '<span class="c-miss">no price</span>'
 }
 function costHtml(r) {
