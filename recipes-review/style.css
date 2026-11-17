@@ -217,3 +217,17 @@ body.view .x, body.view .add { display: none; }
 .sug summary::-webkit-details-marker { display: none; }
 .sug[open] span { display: block; margin-top: 4px; }
 .size .sug { flex-basis: 100%; }
+
+/* Take-away packaging as ticks (17/11/2026) */
+.pks { display: grid; grid-template-columns: 1fr; gap: 6px; }
+.pk { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 4px 10px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+.pk.on { border-color: var(--good); background: #f1f8f4; }
+.pk label { display: flex; align-items: center; gap: 10px; flex: 1; min-height: 40px; cursor: pointer; }
+.pk input[type=checkbox] { width: 22px; height: 22px; accent-color: var(--good); flex: none; }
+.pk-q input { width: 56px; min-height: 36px; padding: 4px 6px; text-align: center; }
+.pk-sug { color: var(--mid); font-size: 11px; }
+.pk-more { margin-top: 8px; }
+.pk-more summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; color: var(--accentInk); font-weight: 600; }
+.pk-other { margin: 12px 0 4px; font-size: 13px; font-weight: 600; color: var(--slate); }
+.presets { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+@media (min-width: 700px) { .pks { grid-template-columns: 1fr 1fr; } }

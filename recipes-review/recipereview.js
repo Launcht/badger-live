@@ -85,6 +85,11 @@ function cleanLine(l) {
     if (!Number.isFinite(adj) || adj < 0.9 || adj > 1.1) return no(`${name.value}: its amount could not be read.`)
     if (adj !== 1) out.adj = adj
   }
+  // a packaging tick (Tarryn, 17/11/2026: "lets do check boxes"): which packaging on her list this line is
+  if (l.pack != null) {
+    if (!/^p-[a-z0-9-]{1,40}$/.test(String(l.pack))) return no(`${name.value}: that packaging could not be found.`)
+    out.pack = String(l.pack)
+  }
   if (l.sug != null) {
     if (typeof l.sug !== 'object' || typeof l.sug.was !== 'string') return no(`${name.value}: its suggestion could not be read.`)
     out.sug = { was: l.sug.was.slice(0, LIMIT.lineText) }
@@ -340,7 +345,7 @@ export async function handle(req, store) {
   if (!me) return reply(404, { problem: 'This link is not right. Ask Tarryn for it again.' })
   if (req.action === 'open') {
     const all = await store.list()
-    const body = { who: me.who, canEdit: me.edit, recipes: all.recipes, notes: all.notes, items: all.items, measures: all.measures || [] }
+    const body = { who: me.who, canEdit: me.edit, recipes: all.recipes, notes: all.notes, items: all.items, measures: all.measures || [], packaging: all.packaging || [] }
     if (!me.edit) body.changes = await store.history()
     return reply(200, body)
   }

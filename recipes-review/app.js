@@ -9,7 +9,7 @@ const API = 'https://nptyrtjdvqglgwkaepce.supabase.co/functions/v1/badger-recipe
 const key = new URLSearchParams(location.hash.slice(1)).get('k') || new URLSearchParams(location.search).get('k') || ''
 const MENU_ORDER = ['Breakfast', 'Midday Munch', 'Everyday Favourites', 'Hot Drinks', 'Cold Drinks', 'Bakes', 'Batches']
 
-const S = { recipes: [], byId: new Map(), items: [], itemById: new Map(), itemByName: new Map(), measures: new Map(), canEdit: false, who: '', show: 'all' }
+const S = { recipes: [], byId: new Map(), items: [], itemById: new Map(), itemByName: new Map(), measures: new Map(), packaging: [], canEdit: false, who: '', show: 'all' }
 const $ = (s, el = document) => el.querySelector(s)
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
 const SEP = '<span class="dot" aria-hidden="true">/</span>'
@@ -235,6 +235,27 @@ function otherHtml(r) {
     ${S.canEdit && o.ingredients && o.ingredients.length ? '<button type="button" class="btn ghost" data-act="use-other">Use the Odoo list instead</button>' : ''}</div>`
 }
 
+// Take-away as ticks (Tarryn, 17/11/2026: "lets do check boxes ... pre check box the obvious she can edit if wrong").
+// A tick is a take-away line pointing at the packaging list; one tap adds or removes it. Ticked ones first, the rest of
+// what she stocks one tap away, and "Other packaging" for anything not on the list.
+function packChip(r, p, l) {
+  return `<div class="pk${l ? ' on' : ''}" data-pack="${esc(p.key)}">
+    <label><input type="checkbox" data-act="pack"${l ? ' checked' : ''}${ro()}><span>${esc(p.name)}</span></label>
+    ${l ? `<span class="pk-q"><input class="pk-qty" type="text" inputmode="decimal" value="${l.qty ?? ''}" aria-label="How many ${esc(p.name)}"${ro()}></span>` : ''}
+    ${l && l.sug ? '<small class="pk-sug">suggested</small>' : ''}
+  </div>`
+}
+function packHtml(r) {
+  const ticks = new Map(r.takeaway.filter((l) => l.pack).map((l) => [l.pack, l]))
+  const on = S.packaging.filter((p) => ticks.has(p.key))
+  const off = S.packaging.filter((p) => !ticks.has(p.key))
+  const other = r.takeaway.filter((l) => !l.pack)
+  return `<div class="pks">${on.map((p) => packChip(r, p, ticks.get(p.key))).join('')}</div>
+    ${on.length ? '' : '<p class="warn">No packaging picked. Tick what it goes out in.</p>'}
+    ${off.length ? `<details class="pk-more"><summary>More packaging (${off.length})</summary><div class="pks">${off.map((p) => packChip(r, p, null)).join('')}</div></details>` : ''}
+    ${other.length || S.canEdit ? `<p class="pk-other">Other packaging</p>${linesHtml(other, 'takeaway', 'Add other packaging')}` : ''}`
+}
+
 function bodyHtml(r) {
   const s = r.seed || {}
   const info = [
@@ -253,7 +274,7 @@ function bodyHtml(r) {
       <button type="button" class="${r.kind === 'batch' ? 'on' : ''}" data-act="kind" data-v="batch"${ro()}>Batch <small>made here, used in other recipes</small></button></div></div>
     ${makes}
     <h3>Ingredients</h3>${linesHtml(r.ingredients, 'ingredients', 'Add an ingredient')}
-    ${r.kind === 'sold' ? `<h3>Take-away extras <small>only taken off stock for take-away</small></h3>${linesHtml(r.takeaway, 'takeaway', 'Add a take-away extra (box, cup, lid, straw)')}` : ''}
+    ${r.kind === 'sold' ? `<h3>Take-away packaging <small>only taken off stock for take-away</small></h3>${packHtml(r)}` : ''}
     ${r.kind === 'sold' ? `<h3>Choices <small>the choice decides which ingredient comes off</small></h3>${choicesHtml(r)}` : ''}
     <div class="cost" id="cost-${esc(r.id)}">${costHtml(r)}</div>
     ${otherHtml(r)}
@@ -501,7 +522,12 @@ function onLineInput(r, lineEl, target, final) {
     const batch = S.recipes.find((x) => x.kind === 'batch' && x.id !== r.id && x.name.toLowerCase() === v.toLowerCase())
     const item = S.itemByName.get(v.toLowerCase())
     if (batch) { l.batch = batch.id; l.item = null; l.price = null }
-    else if (item) { l.item = item.id; l.batch = null; if (!similar(l.name, v)) l.price = null }
+    else if (item) {
+      l.item = item.id; l.batch = null
+      if (!similar(l.name, v)) l.price = null
+      // a new line takes the unit the kitchen counts it in (g, ml, each): one less thing to pick
+      if (l.qty == null && UNITS.includes(item.unit)) { l.unit = item.unit; lineEl.querySelector('.l-unit').value = item.unit }
+    }
     else if (!similar(l.name, v)) { l.item = null; l.batch = null; l.price = null }
     l.name = v
   } else if (target.classList.contains('l-qty')) {
@@ -551,6 +577,28 @@ function forgetChoice(r, g, option) {
       })
     }
   }
+}
+
+// Ready-made choice groups (17/11/2026, to cut typing): copied from lines already on the page, so they carry prices
+function presetNames() { return ['Bread', 'Sauce', 'Other'] }
+function presetGroup(name) {
+  const find = (pred) => { for (const r of S.recipes) for (const l of [...r.ingredients, ...r.choices.flatMap((g) => g.options.flatMap((o) => o.lines))]) if (pred(l)) return l; return null }
+  const copy = (l, qty) => { const { sug, adj, when, ...rest } = l; return { ...rest, id: nid(), qty } }
+  const opt = (name, lines, usual) => ({ id: nid(), name, usual, lines })
+  if (name === 'Bread') {
+    const sour = find((l) => l.measure === 'm-sourdough-loafbread' && l.unit === 'piece')
+    const health = find((l) => l.measure === 'm-health-bread-loaf' && l.unit === 'piece')
+    return { id: nid(), name: 'Bread', options: [opt('Sourdough', sour ? [copy(sour, 2)] : [], true), opt('Health', health ? [copy(health, 2)] : [], false)] }
+  }
+  if (name === 'Sauce') {
+    const sauces = [['Ranch', /^ranch sauce$/i], ['Chipotle', /^chipotle a(i)?oli$/i], ['Buffalo', /^buffalo sauce$/i]]
+    const options = sauces.map(([n, re], i) => {
+      const b = S.recipes.find((r) => r.kind === 'batch' && re.test(r.name))
+      return opt(n, b ? [{ id: nid(), name: b.name, qty: 30, unit: 'ml', item: null, batch: b.id, price: null, was: null, flag: null }] : [], i === 0)
+    })
+    return { id: nid(), name: 'Sauce', options }
+  }
+  return { id: nid(), name: 'New choice', options: [opt('Usual', [], true), opt('Other', [], false)] }
 }
 
 function wire() {
@@ -620,8 +668,32 @@ function wire() {
     }
     const gEl = b.closest('.group')
     const g = gEl ? r.choices[+gEl.dataset.g] : null
+    if (act === 'pack') {
+      const key = b.closest('.pk').dataset.pack
+      const p = S.packaging.find((x) => x.key === key)
+      const i = r.takeaway.findIndex((l) => l.pack === key)
+      if (i >= 0) r.takeaway.splice(i, 1)
+      else r.takeaway.push({ id: nid(), name: p.name, qty: 1, unit: 'each', item: p.item, batch: null, price: p.price, was: null, flag: null, pack: key })
+      save(r.id, 'takeaway', r.takeaway)
+      rerenderBody(r)
+      return
+    }
+    if (act === 'preset') {
+      const g = presetGroup(b.dataset.v)
+      if (g) r.choices.push(g)
+      save(r.id, 'choices', r.choices)
+      rerenderBody(r)
+      return
+    }
     if (act === 'add-group') {
-      r.choices.push({ id: nid(), name: 'New choice', options: [{ id: nid(), name: 'Usual', usual: true, lines: [] }, { id: nid(), name: 'Other', usual: false, lines: [] }] })
+      // the usual ones are one tap: Bread or Sauce come filled in; "Other" is a blank group
+      const menu = b.parentElement.querySelector('.presets')
+      if (!menu) {
+        b.insertAdjacentHTML('afterend', `<div class="presets">${presetNames().map((n) => `<button type="button" class="btn ghost" data-act="preset" data-v="${esc(n)}">${esc(n)}</button>`).join('')}</div>`)
+        return
+      }
+      menu.remove()
+      return
     } else if (act === 'del-group' && g) {
       if (!confirm(`Remove the ${g.name} choices?`)) return
       r.choices.splice(+gEl.dataset.g, 1)
@@ -651,6 +723,17 @@ function wire() {
     const card = t.closest('.card')
     if (!card) return
     const r = S.byId.get(card.dataset.id)
+    if (t.classList.contains('pk-qty')) {
+      const l = r.takeaway.find((x) => x.pack === t.closest('.pk').dataset.pack)
+      const q = Number(t.value.trim().replace(',', '.'))
+      if (!(Number.isFinite(q) && q > 0)) { bad(t, 'how many must be a number above nought, like 1 or 2.'); return }
+      good(t)
+      l.qty = q
+      delete l.sug
+      refreshCosts()
+      save(r.id, 'takeaway', r.takeaway, final ? 0 : 800)
+      return
+    }
     const lineEl = t.closest('.line')
     if (lineEl) return onLineInput(r, lineEl, t, final)
     if (t.classList.contains('r-name')) {
@@ -811,6 +894,7 @@ async function start() {
   S.byId = new Map(S.recipes.map((x) => [x.id, x]))
   S.items = d.items
   S.itemById = new Map(d.items.map((i) => [i.id, i]))
+  S.packaging = d.packaging || []
   S.measures = new Map((d.measures || []).map((m) => [m.key, { ...m, value: m.value == null ? null : Number(m.value), grams: m.grams == null ? null : Number(m.grams) }]))
   const names = new Map()
   for (const i of [...d.items].sort((a, b) => Number(b.live) - Number(a.live) || Number(b.per != null) - Number(a.per != null))) {
