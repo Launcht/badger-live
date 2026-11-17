@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en-ZA">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex, nofollow">
+<title>Your recipes - Badger Kitchen</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400&family=Montserrat:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="../icon-192.png">
+</head>
+<body>
+<div class="bar" id="bar">
+  <div class="bar-in">
+    <span class="prog" id="prog">Loading your recipes...</span>
+    <span class="status" id="status" aria-live="polite"></span>
+  </div>
+  <div class="track"><div class="fill" id="fill"></div></div>
+</div>
+
+<main id="main">
+  <header class="top">
+    <img class="mark" src="../brand/badger-holdings-mark.png" alt="" width="44" height="44">
+    <div>
+      <h1>Your recipes, one list</h1>
+      <p class="sub" id="whoLine">Every recipe you have made, in Loyverse and in Odoo, on one page.</p>
+    </div>
+  </header>
+
+  <section class="changes" id="changes" hidden></section>
+
+  <section class="notes" id="notes">
+    <details class="note" open>
+      <summary>What I need from you</summary>
+      <ul>
+        <li>For each recipe, tap <b>Yes</b> if we need it or <b>No</b> if we don't.</li>
+        <li>Then open it and check the ingredients and amounts. Fix any that are wrong, add any that are missing, and use <b>Notes</b> for anything else.</li>
+        <li>Everything saves as you go. You can stop and come back to this link any time.</li>
+        <li>Nothing here changes Odoo or Loyverse.</li>
+      </ul>
+      <p class="small">I moved cups, lids, boxes and straws into <b>Take-away extras</b>. If one is used for eat-in too, remove it there and add it to the ingredients. Where an amount says <b>"of one"</b> (like 0.09 of one loaf), that is how it was written before: if you know it in slices or grams, change it.</p>
+    </details>
+    <details class="note">
+      <summary>Why Odoo is not working for the kitchen</summary>
+      <ul>
+        <li>It is too complicated for the team. Stock is booked into Studio or Cause and then has to be moved to the Kitchen.</li>
+        <li>So nobody has live control of what is actually on the shelf.</li>
+        <li>The recipes have grown messy: 127 recipes in Odoo, 23 of them with no ingredients, and drinks and meals split into separate eat-in and take-away copies (Cup O Queen alone is 16 copies).</li>
+      </ul>
+    </details>
+    <details class="note">
+      <summary>Loyverse: the good and the not so good</summary>
+      <p class="h">The good</p>
+      <ul>
+        <li>Simple screens the team can learn quickly.</li>
+        <li>A recipe takes its ingredients off stock when it is sold.</li>
+        <li>Batches: make a batch and the ingredients come off, the batch goes on.</li>
+        <li>Low stock fills the order to the supplier for you.</li>
+        <li>It costs little to run.</li>
+      </ul>
+      <p class="h">The not so good</p>
+      <ul>
+        <li>Only one layer of choices. As you found, a dish cannot offer sourdough or health bread, or regular or almond milk, and take off the right one.</li>
+        <li>No units on recipe lines: it says 0.150 of a 1 kg pack, not 150 g.</li>
+        <li>A batch shows no cost at all until it has been made once, so a new dish shows the wrong profit.</li>
+        <li>Take-away packaging is either always counted or never.</li>
+        <li>One supplier per item.</li>
+        <li>The Badger app would still need its own menu, times and rules.</li>
+      </ul>
+    </details>
+    <details class="note">
+      <summary>How we are doing it</summary>
+      <ul>
+        <li>One recipe list for the Kitchen.</li>
+        <li>Each recipe has its ingredients, its <b>take-away extras</b> (the box, cup or lid, taken off stock only when it is ordered as take-away) and its <b>choices</b> (bread, milk, beans, shots, sauce), where the choice decides which ingredient comes off.</li>
+        <li>The cost is worked out from the ingredients, never typed in.</li>
+        <li>Once your recipes are final we bring them in, and then link each ingredient to its stock item.</li>
+      </ul>
+    </details>
+  </section>
+
+  <nav class="jump" id="jump" aria-label="Menu groups"></nav>
+  <div class="filter" id="filter">
+    <button type="button" class="chip on" data-show="all">All</button>
+    <button type="button" class="chip" data-show="todo">Not checked yet</button>
+  </div>
+
+  <div id="list"><p class="loading">Loading...</p></div>
+
+  <section class="block" id="addBlock" hidden>
+    <h2>Missing a recipe?</h2>
+    <p class="small">Add it here and fill in its ingredients.</p>
+    <div class="row">
+      <input id="addName" type="text" maxlength="120" placeholder="Recipe name" aria-label="New recipe name">
+      <select id="addCat" aria-label="Menu group"></select>
+      <button type="button" class="btn" id="addBtn">Add</button>
+    </div>
+  </section>
+
+  <section class="block" id="leftOut"></section>
+
+  <section class="block" id="anything">
+    <h2>Anything else</h2>
+    <p class="small">Anything that does not fit a recipe: a dish that is missing, a supplier, a question.</p>
+    <textarea id="anythingElse" rows="5" maxlength="8000" placeholder="Write here..."></textarea>
+  </section>
+  <p class="foot">Badger Kitchen recipes. Nothing on this page changes Odoo or Loyverse.</p>
+</main>
+
+<datalist id="itemList"></datalist>
+<script type="module" src="app.js"></script>
+</body>
+</html>
