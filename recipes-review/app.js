@@ -346,7 +346,7 @@ function measureCard(m) {
   const reads = users.map(([r, ls]) => `<li><a href="#r-${esc(r.id)}" data-open="${esc(r.id)}">${esc(r.name)}</a>: ${ls.map((l) => (l.unit === 'piece' ? plural(l.qty, m.unit) : esc(fmtQty(l.qty, l.unit)))).join(', ')}</li>`).join('')
   return `<div class="buy" data-key="${esc(m.key)}">
     <div class="b-name">${esc(m.name)}</div>
-    <div class="b-eq"><span>1 ${esc(m.pack)} <small>(${esc(price)})</small> =</span>${amount}<span>${esc(plur(Number(m.value), m.unit))}</span>
+    <div class="b-eq"><span>${/^\d/.test(m.pack) ? '' : '1 '}${esc(m.pack)} <small>(${esc(price)})</small> =</span>${amount}<span>${esc(plur(Number(m.value), m.unit))}</span>
       ${isSuggestedMeasure(m) ? sugMark(/^m-(sourdough|health)/.test(m.key) ? 'Tarryn\'s figure: 12 slices a loaf.' : 'My best kitchen guess. Change it if your pack is different.') : ''}</div>
     <details class="m-users"><summary>${users.length} recipe${users.length === 1 ? '' : 's'}</summary><ul>${reads}</ul></details>
   </div>`
