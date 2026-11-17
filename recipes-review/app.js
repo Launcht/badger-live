@@ -318,7 +318,7 @@ function measureCard(m) {
       <span>=</span><input class="m-share" type="text" inputmode="decimal" value="${esc(shareVal)}" placeholder="${esc(hintShare)}" aria-label="Part of one pack"${ro()}>
       <span>of a</span><input class="m-pack-w" type="text" maxlength="20" value="${esc(m.pack)}" aria-label="What it comes in"${ro()}></div>
     <div class="m-row"><span>or 1 ${esc(m.pack)} =</span><input class="m-count" type="text" inputmode="decimal" value="${esc(countVal)}" placeholder="${esc(hintCount)}" aria-label="How many in one pack"${ro()}><span>${esc(m.unit)}s</span></div>
-    <div class="m-row"><span>1 ${esc(m.unit)} weighs</span><input class="m-grams" type="text" inputmode="decimal" value="${m.grams ?? ''}" placeholder="optional" aria-label="Weight of one piece in grams"${ro()}><span>g</span></div>
+    <div class="m-row"><span>1 ${esc(m.unit)} weighs</span><input class="m-grams" type="text" inputmode="decimal" value="${m.grams ?? ''}" aria-label="Weight of one piece in grams"${ro()}><span>g, if you know it</span></div>
     ${share ? '' : `<p class="warn">Not set yet. Recipes using it keep the amount as it was written until you set it.</p>`}
     <details class="m-users"><summary>The recipes that use it</summary><ul>${reads}</ul></details>
   </div>`
