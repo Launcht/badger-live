@@ -327,11 +327,9 @@ export function fmtRand(n) {
   return `${n < 0 ? '-' : ''}R${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}.${cents}`
 }
 const trim = (n) => String(Number(n.toFixed(3)))
-/** An amount the way a kitchen says it: 150 g, 1.5 kg, 300 ml, 2 each, 0.09 of one. */
+/** An amount the way a kitchen says it: 150 g, 1500 g, 300 ml, 2 each. One unit (17/11/2026): grams stay grams. */
 export function fmtQty(q, unit) {
   if (q == null) return ''
-  if (unit === 'g' && q >= 1000) return `${trim(q / 1000)} kg`
-  if (unit === 'ml' && q >= 1000) return `${trim(q / 1000)} L`
   return `${trim(q)} ${UNIT_WORDS[unit] || unit}`
 }
 

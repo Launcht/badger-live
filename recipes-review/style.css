@@ -246,3 +246,5 @@ body.view .x, body.view .add { display: none; }
 .buy .m-users { margin-top: 0; font-size: 13px; }
 .buy .m-users summary { min-height: 32px; font-weight: 400; color: var(--mid); }
 .buy .err { flex-basis: 100%; }
+
+.l-unit-fixed { display: flex; align-items: center; min-height: 44px; padding: 0 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--wash); color: var(--slate); font-size: 15px; }

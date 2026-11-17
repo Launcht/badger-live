@@ -188,17 +188,24 @@ function measured(l) {
 // a suggestion we filled in: a small mark; what it was only on tap or hover
 const sugMark = (was) => `<details class="sug" title="${esc(was)}"><summary>Suggested</summary><span>${esc(was)} Change it if it is wrong.</span></details>`
 
+// One unit per ingredient (Tarryn, 17/11/2026: "its either slices or grams ... no mixing"): a line on an ingredient's buy
+// row shows that row's one unit and cannot pick another; only a new line not yet on the list, or a batch, picks.
+const ONE_UNITS = ['g', 'ml', 'each', 'portion']
+function rowOf(l) { const m = l.measure && S.measures.get(l.measure); return m && m.kind ? m : null }
+function unitWordOf(l) {
+  const m = rowOf(l)
+  if (!m) return null
+  return m.kind === 'count' ? plur(Number(l.qty) || 2, m.unit) : m.kind
+}
 function lineRow(l, path, r) {
   const mm = measured(l)
-  const shownUnit = mm ? mm.unit : l.unit
-  // "of one" is never offered (Tarryn, 17/11/2026: "0.009 etc. is ridiculous"); only shown on a line still written so
-  const units = [...(mm ? [['piece', mm.m.unit]] : []), ...UNITS.filter((u) => u !== 'piece' && (u !== 'part' || l.unit === 'part')).map((u) => [u, UNIT_WORDS[u]])]
-    .map(([u, w]) => `<option value="${u}"${u === shownUnit ? ' selected' : ''}>${esc(w)}</option>`).join('')
+  const fixed = unitWordOf(l)
+  const units = ONE_UNITS.map((u) => `<option value="${u}"${u === l.unit ? ' selected' : ''}>${esc(UNIT_WORDS[u])}</option>`).join('')
   const flag = mm ? mm.flag : l.flag
   return `<div class="line" data-path="${esc(path)}" data-id="${esc(l.id)}">
     <input class="l-name" type="text" list="itemList" maxlength="120" value="${esc(l.name)}" aria-label="Ingredient"${ro()}>
     <input class="l-qty" type="text" inputmode="decimal" value="${(mm ? mm.show : l.qty) ?? ''}" aria-label="Amount" placeholder="Amount"${ro()}>
-    <select class="l-unit" aria-label="Unit"${ro()}>${units}</select>
+    ${fixed ? `<span class="l-unit l-unit-fixed">${esc(fixed)}</span>` : `<select class="l-unit" aria-label="Unit"${ro()}>${units}</select>`}
     <span class="l-cost">${lineCostHtml(l)}</span>
     ${S.canEdit ? `<button type="button" class="x" data-act="del-line" aria-label="Remove">${X}</button>` : ''}
     ${r && path.startsWith('choices.') ? whenSelect(r, l, path) : ''}
@@ -269,7 +276,7 @@ function bodyHtml(r) {
   ].join('')
   const makes = r.kind === 'batch' ? `<div class="field"><label>Makes how much <span class="req">needed</span></label>
       <div class="row"><input class="m-qty" type="text" inputmode="decimal" value="${r.makes ? r.makes.qty : ''}" placeholder="Amount" aria-label="Makes how much"${ro()}>
-      <select class="m-unit" aria-label="Unit"${ro()}>${MAKES_UNITS.map((u) => `<option value="${u}"${r.makes && r.makes.unit === u ? ' selected' : ''}>${u === 'portion' ? 'portions' : u}</option>`).join('')}</select></div>
+      <select class="m-unit" aria-label="Unit"${ro()}>${MAKES_UNITS.filter((u) => u !== 'kg' && u !== 'L').map((u) => `<option value="${u}"${r.makes && r.makes.unit === u ? ' selected' : ''}>${u === 'portion' ? 'portions' : u}</option>`).join('')}</select></div>
       ${r.makes ? (isSuggestedSize(r) ? sugMark(`I added up the ingredients: ${r.seed.makes_suggested.how}.`) : '') : '<p class="warn">Please fill this in: dishes that use this batch cannot be costed without it.</p>'}</div>` : ''
   return `${info}
     <div class="field"><label>Name</label><input class="r-name" type="text" maxlength="120" value="${esc(r.name)}"${ro()}></div>
@@ -356,7 +363,7 @@ function renderShared() {
     <p class="small">Loyverse never recorded this, so I added up each batch's ingredients. Change any that are wrong: it is the same box as on the batch's own card.</p>
     ${batches.map((r) => `<div class="size" data-id="${esc(r.id)}"><a href="#r-${esc(r.id)}" data-open="${esc(r.id)}">${esc(r.name)}</a>
       <div class="row"><input class="s-qty" type="text" inputmode="decimal" value="${r.makes ? r.makes.qty : ''}" placeholder="Amount" aria-label="${esc(r.name)} makes how much"${ro()}>
-      <select class="s-unit" aria-label="Unit"${ro()}>${MAKES_UNITS.map((u) => `<option value="${u}"${r.makes && r.makes.unit === u ? ' selected' : ''}>${u === 'portion' ? 'portions' : u}</option>`).join('')}</select></div>
+      <select class="s-unit" aria-label="Unit"${ro()}>${MAKES_UNITS.filter((u) => u !== 'kg' && u !== 'L').map((u) => `<option value="${u}"${r.makes && r.makes.unit === u ? ' selected' : ''}>${u === 'portion' ? 'portions' : u}</option>`).join('')}</select></div>
       ${isSuggestedSize(r) ? sugMark(`I added up the ingredients: ${r.seed.makes_suggested.how}.`) : ''}</div>`).join('')}` : ''
 }
 
@@ -493,6 +500,18 @@ function onLineInput(r, lineEl, target, final) {
     const v = target.value.trim()
     if (!v) { bad(target, 'each ingredient needs a name.'); return }
     good(target)
+    const buyRow = [...S.measures.values()].find((m) => m.kind && m.name.toLowerCase() === v.toLowerCase())
+    if (buyRow && final) {
+      l.measure = buyRow.key
+      l.unit = buyRow.kind === 'count' ? (/^m-(sourdough|health)/.test(buyRow.key) ? 'piece' : 'each') : buyRow.kind
+      l.item = buyRow.item || null
+      l.batch = null
+      l.price = null
+      l.name = v
+      save(r.id, fieldOf(path), r[fieldOf(path)])
+      rerenderBody(r)
+      return
+    }
     const batch = S.recipes.find((x) => x.kind === 'batch' && x.id !== r.id && x.name.toLowerCase() === v.toLowerCase())
     const item = S.itemByName.get(v.toLowerCase())
     if (batch) { l.batch = batch.id; l.item = null; l.price = null }
@@ -506,7 +525,8 @@ function onLineInput(r, lineEl, target, final) {
     l.name = v
   } else if (target.classList.contains('l-qty')) {
     const q = target.value.trim().replace(',', '.')
-    const unitShown = lineEl.querySelector('.l-unit').value
+    const unitSel = lineEl.querySelector('select.l-unit')
+    const unitShown = unitSel ? unitSel.value : l.unit
     if (q === '') l.qty = null
     else if (Number.isFinite(Number(q)) && Number(q) > 0) l.qty = Number(q)
     else { bad(target, 'the amount must be a number above nought, like 150 or 0.5.'); return }
@@ -876,7 +896,7 @@ async function start() {
   }
   S.itemByName = names
   const batchNames = S.recipes.filter((x) => x.kind === 'batch' && !x.left_out).map((x) => x.name)
-  $('#itemList').innerHTML = [...new Set([...batchNames, ...[...names.values()].map((i) => i.name)])].sort((a, b) => a.localeCompare(b)).map((n) => `<option value="${esc(n)}"></option>`).join('')
+  $('#itemList').innerHTML = [...new Set([...batchNames, ...[...S.measures.values()].filter((m) => m.kind).map((m) => m.name), ...[...names.values()].map((i) => i.name)])].sort((a, b) => a.localeCompare(b)).map((n) => `<option value="${esc(n)}"></option>`).join('')
   $('#anythingElse').value = d.notes || ''
   if (!S.canEdit) {
     document.body.classList.add('view')
