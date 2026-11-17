@@ -297,3 +297,7 @@ body.view .foot-row .btn { display: none; }
   .sup .fix, .sup .check, .sup .ask, .sup .info, .merged { margin-left: 16px; margin-right: 16px; }
   .two { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
 }
+
+/* Fixes after the independent test (03) */
+.need.ask-used { background: #fff4dc; border-radius: 10px; margin: 6px 12px 0; padding: 10px; }
+.need-msg { flex-basis: 100%; margin: 4px 0 0; font-size: 14px; font-weight: 600; color: var(--amber); }

@@ -37,7 +37,23 @@ export function isCell(v) {
   const l = localPhone(v)
   return !!l && /^0[678]/.test(l)
 }
+/** +27 and nine digits, the one way a number is stored (test 03, finding 4). Null when it is not a number. */
+export function canonPhone(v) {
+  const l = localPhone(v)
+  return l && `+27${l.replace(/\s/g, '').slice(1)}`
+}
 export const OWN_DOMAIN = /@wildmongoo\.(com|co\.za)$/i
+// Addresses of the group (Wild Mongoo's, Badger's, Dotsure's) and of our own companies: never a supplier's email to
+// fill in for her (test 03, finding 1). Found in her Odoo 17/11: wildmongoo.com, dotsure.co.za, badgerholdings.co.za,
+// badgerins.co.za. Only Wild Mongoo's is refused when typed; the others are hers to decide.
+const GROUP = [[/@wildmongoo\.(com|co\.za)$/i, 'Wild Mongoo'], [/@dotsure\.co\.za$/i, 'Dotsure'], [/@badgerholdings\.co\.za$/i, 'Badger Holdings'],
+  [/@badgerins\.co\.za$/i, 'Badger Insurance'], [/@honeyguide\.co\.za$/i, 'Honeyguide'], [/@kamb\.co\.za$/i, 'Kamb'],
+  [/@assayhouse\.co\.za$/i, 'Assay House'], [/@parallaxai\.co\.za$/i, 'ParallaxAi'], [/@launcht\.co\.za$/i, 'LAUNCHT']]
+export function groupOf(email) {
+  const e = String(email || '').trim()
+  const g = e && GROUP.find(([re]) => re.test(e))
+  return g ? g[1] : null
+}
 export function emailOk(v) {
   const t = String(v).trim()
   return t.length <= LIMIT.email && /^[^\s@,;<>]+@[^\s@,;<>]+\.[A-Za-z]{2,}$/.test(t)
@@ -79,7 +95,7 @@ export function validate(field, value) {
       const p = t.value.trim()
       if (!p) return ok('')
       if (!phoneOk(p)) return no(`that ${field === 'phone' ? 'phone' : 'WhatsApp'} number is not right. Use 10 digits starting with 0, or +27 and 9 digits.`)
-      return ok(p)
+      return ok(canonPhone(p))
     }
     case 'wa_same':
     case 'confirmed':
@@ -95,6 +111,32 @@ export function validate(field, value) {
     case 'anything_else': return freeText(value, LIMIT.anything_else)
     default: return no('That cannot be changed here.')
   }
+}
+
+/** Why Looks right cannot be tapped yet, or null (test 03, finding 2: never a quiet Yes on Still used). */
+export function confirmProblem(s) {
+  if (s.still_used !== true && s.still_used !== false) return 'tap Yes or No on Still used first.'
+  return null
+}
+
+/**
+ * Yes, the same supplier (test 03, finding 3): what this card carries across to the other one, only where the other
+ * is empty. A person's card (seed.person) brings its name as the contact. A group address is never carried.
+ */
+export function carryAcross(from, to) {
+  const out = {}
+  const contact = from.contact || (from.seed && from.seed.person ? from.name : '')
+  if (contact && !to.contact) out.contact = contact
+  const email = from.email && !groupOf(from.email) ? from.email : ''
+  if (email && !to.email) out.email = email
+  if (from.phone && !to.phone) {
+    out.phone = from.phone
+    if (from.wa_same && !to.whatsapp) out.wa_same = true
+  }
+  if (!from.wa_same && from.whatsapp && !to.whatsapp && !(to.wa_same && to.phone)) out.whatsapp = from.whatsapp
+  const ways = (from.order_by || []).filter((w) => w !== 'email' || email || to.email)
+  if (ways.length && !(to.order_by || []).length) out.order_by = ways
+  return out
 }
 
 /** Checked: she tapped Looks right, or said Yes, it is the same as another supplier (merged into it). */
@@ -147,6 +189,7 @@ export async function handle(req, store) {
     const r = await store.save(field === 'anything_else' ? null : req.supplier, field, v.value, me.who)
     if (r.missing) return reply(404, { problem: 'That supplier could not be found.' })
     if (r.noAsk) return reply(400, { problem: 'There is nothing to merge this supplier with.' })
+    if (r.needsUsed) return reply(400, { problem: 'tap Yes or No on Still used first.' })
     return reply(200, { at: r.at, changed: r.changed, value: v.value })
   }
   if (req.action === 'add') {
@@ -182,6 +225,8 @@ export function memoryStore({ keys, suppliers, notes = '' }) {
       const r = s.suppliers.get(id)
       if (!r) return { missing: true }
       if (field === 'same' && value !== null && !(r.seed && r.seed.ask)) return { noAsk: true }
+      if (field === 'confirmed' && value === true && confirmProblem(r)) return { needsUsed: true }
+      if (field === 'still_used' && value === null && r.confirmed) return { needsUsed: true }
       if (same(r[field], value)) return { at, changed: false }
       s.changes.push({ at, who, supplier: id, name: r.name, field, before: r[field] ?? null, after: value })
       r[field] = value

@@ -4,7 +4,7 @@
  * deploy, so the page and the server cannot disagree. The key is in the link after # (never sent to a web server's
  * log), and goes in the request body. The page holds no supplier details and no notes: all of it comes with the key.
  */
-import { validate, progress, isChecked, stillSuggested, ORDER_WAYS, ORDER_WORDS } from './supplierreview.js'
+import { validate, progress, isChecked, stillSuggested, ORDER_WAYS, ORDER_WORDS, localPhone, confirmProblem, carryAcross } from './supplierreview.js'
 
 const API = 'https://nptyrtjdvqglgwkaepce.supabase.co/functions/v1/badger-suppliers'
 const key = new URLSearchParams(location.hash.slice(1)).get('k') || ''
@@ -120,7 +120,22 @@ addEventListener('beforeunload', (e) => {
 
 const SRC = { odoo: 'Odoo', loyverse: 'Loyverse', both: 'Odoo and Loyverse', new: 'Added by you' }
 const ro = () => (S.canEdit ? '' : ' disabled')
+// what a "Yes, same" carried onto this card from the other one (test 03, finding 3): Suggested until she checks it
+const CARRY = ['contact', 'email', 'phone', 'whatsapp', 'wa_same', 'order_by']
+const EMPTY = { contact: '', email: '', phone: '', whatsapp: '', wa_same: false, order_by: [] }
+function carriedFrom(s, f) {
+  if (s.confirmed) return null
+  for (const x of S.suppliers) {
+    if (x.same !== true || !x.seed.ask || x.seed.ask.id !== s.id) continue
+    const want = carryAcross(x, { ...s, [f]: EMPTY[f] })[f]
+    if (want !== undefined && JSON.stringify(want) === JSON.stringify(s[f]) && JSON.stringify(s[f]) !== JSON.stringify(EMPTY[f])) return x
+  }
+  return null
+}
+const showPhone = (v) => localPhone(v) || v || ''
 const sugTag = (s, f) => {
+  const from = CARRY.includes(f) && carriedFrom(s, f)
+  if (from) return `<span class="tag was" title="${esc(`From ${from.name}`)}">Suggested</span>`
   if (!stillSuggested(s, f)) return ''
   // a name is only our suggestion where I tidied Odoo's capitals; otherwise it is simply her own name for them
   if (f === 'name' && !(s.seed && s.seed.name_was)) return ''
@@ -156,9 +171,10 @@ function orderHints(s) {
 }
 function summaryHtml(s) {
   if (s.still_used === false) return '<div class="sum"><p>Not used any more.</p></div>'
-  const bits = [s.contact, s.email, s.phone && `Phone ${s.phone}`, (s.wa_same ? s.phone : s.whatsapp) && `WhatsApp ${s.wa_same ? s.phone : s.whatsapp}`].filter(Boolean)
+  const wa = s.wa_same ? s.phone : s.whatsapp
+  const bits = [s.contact, s.email, s.phone && `Phone ${showPhone(s.phone)}`, wa && `WhatsApp ${showPhone(wa)}`].filter(Boolean)
   const how = s.order_by.length ? `Orders by ${s.order_by.map((w) => ORDER_WORDS[w]).join(', ')}` : 'How they take orders: not ticked'
-  return `<div class="sum">${bits.length ? `<p>${bits.map(esc).join(' / ')}</p>` : '<p>No contact details.</p>'}<p>${esc(how)}</p></div>`
+  return `<div class="sum"><p>Still used: Yes</p>${bits.length ? `<p>${bits.map(esc).join(' / ')}</p>` : '<p>No contact details.</p>'}<p>${esc(how)}</p></div>`
 }
 function askHtml(s) {
   const a = s.seed && s.seed.ask
@@ -173,7 +189,7 @@ function askHtml(s) {
 function fieldsHtml(s) {
   const input = (f, label, type, extra = '') => `<div class="field">
       <div class="lbl-row"><label for="${fid(s, f)}">${label}</label>${sugTag(s, f)}</div>
-      <input id="${fid(s, f)}" data-f="${f}" type="${type}" value="${esc(s[f])}" maxlength="${f === 'phone' || f === 'whatsapp' ? 30 : 120}"${extra}${ro()}>
+      <input id="${fid(s, f)}" data-f="${f}" type="${type}" value="${esc(f === 'phone' ? showPhone(s[f]) : s[f])}" maxlength="${f === 'phone' || f === 'whatsapp' ? 30 : 120}"${extra}${ro()}>
     </div>`
   return `<div class="fields">
     <div class="keep">${input('name', 'Supplier name', 'text', ' autocomplete="off"')}</div>
@@ -184,7 +200,7 @@ function fieldsHtml(s) {
       <div class="field">
         <div class="lbl-row"><span class="lab">WhatsApp</span>${sugTag(s, 'wa_same')}</div>
         <label class="tick"><input type="checkbox" data-f="wa_same"${s.wa_same ? ' checked' : ''}${ro()}> Same as phone</label>
-        <div class="wa-own"${s.wa_same ? ' hidden' : ''}><input id="${fid(s, 'whatsapp')}" data-f="whatsapp" type="tel" inputmode="tel" autocomplete="off" maxlength="30" placeholder="WhatsApp number" aria-label="WhatsApp number" value="${esc(s.whatsapp)}"${ro()}></div>
+        <div class="wa-own"${s.wa_same ? ' hidden' : ''}><input id="${fid(s, 'whatsapp')}" data-f="whatsapp" type="tel" inputmode="tel" autocomplete="off" maxlength="30" placeholder="WhatsApp number" aria-label="WhatsApp number" value="${esc(showPhone(s.whatsapp))}"${ro()}></div>
       </div>
     </div>
     <div class="field">
@@ -214,7 +230,8 @@ function cardHtml(s) {
     ${askHtml(s)}
     <div class="need sup-need"><span>Still used?${sugTag(s, 'still_used') ? ` ${sugTag(s, 'still_used')}` : ''}</span>
       <button type="button" class="yn y${s.still_used === true ? ' on' : ''}" data-act="used" data-v="true"${ro()}>Yes</button>
-      <button type="button" class="yn n${s.still_used === false ? ' on' : ''}" data-act="used" data-v="false"${ro()}>No</button></div>
+      <button type="button" class="yn n${s.still_used === false ? ' on' : ''}" data-act="used" data-v="false"${ro()}>No</button>
+      <p class="need-msg" hidden></p></div>
     ${summaryHtml(s)}
     ${fieldsHtml(s)}
     <div class="foot-row">${S.canEdit ? (isChecked(s)
@@ -325,16 +342,23 @@ function wire() {
     const act = b.dataset.act
     if (act === 'used') {
       const v = b.dataset.v === 'true'
+      if (s.confirmed && s.still_used === v) return // a checked supplier keeps a Yes or No
       s.still_used = s.still_used === v ? null : v
       save(s.id, 'still_used', s.still_used)
       redraw(s)
     } else if (act === 'confirm') {
       const wrong = [...holder.querySelectorAll('[data-f]')].find((x) => invalid.has(x))
       if (wrong) { bad(wrong, invalid.get(wrong)); wrong.focus(); return }
-      if (s.still_used === null || s.still_used === undefined) {
-        // Looks right on a card with no answer means she still uses them
-        s.still_used = true
-        save(s.id, 'still_used', true)
+      // never a quiet Yes (test 03, finding 2): she answers Still used herself, the card stays open until she does
+      if (confirmProblem(s)) {
+        const need = holder.querySelector('.sup-need')
+        need.classList.add('ask-used')
+        const msg = need.querySelector('.need-msg')
+        msg.hidden = false
+        msg.textContent = 'Do you still use them? Tap Yes or No, then Looks right.'
+        need.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        need.querySelector('.yn').focus({ preventScroll: true })
+        return
       }
       s.confirmed = true
       save(s.id, 'confirmed', true)
@@ -345,11 +369,21 @@ function wire() {
       const v = b.dataset.v === 'true'
       s.same = s.same === v ? null : v
       save(s.id, 'same', s.same)
+      // Yes, same: what the other card is missing comes across from this one, marked Suggested (test 03, finding 3)
+      const to = s.same === true && S.byId.get(s.seed.ask.id)
+      if (to && !to.confirmed) {
+        for (const [f, val] of Object.entries(carryAcross(s, to))) { to[f] = val; save(to.id, f, val) }
+        redraw(to)
+      }
       redraw(s)
     } else if (act === 'unmerge') {
-      if (!confirm(`Undo: keep ${s.name} as its own supplier?`)) return
+      const to = S.byId.get(s.seed.ask.id)
+      const back = to ? CARRY.filter((f) => carriedFrom(to, f)) : []
+      if (!confirm(`Undo: keep ${s.name} as its own supplier?${back.length ? ` What I copied to ${to.name} comes off again.` : ''}`)) return
+      for (const f of back) { to[f] = structuredClone(EMPTY[f]); save(to.id, f, to[f]) }
       s.same = null
       save(s.id, 'same', null)
+      if (back.length) redraw(to)
       redraw(s)
     }
   })
@@ -410,6 +444,7 @@ function said(c, v) {
   if (v === null || v === undefined || v === '') return '<i>empty</i>'
   if (c.field === 'order_by') return v.length ? esc(v.map((w) => ORDER_WORDS[w] || w).join(', ')) : '<i>none ticked</i>'
   if (c.field === 'wa_same') return v ? 'ticked' : 'not ticked'
+  if (c.field === 'phone' || c.field === 'whatsapp') return esc(showPhone(v))
   if (c.field === 'confirmed') return v ? 'checked' : 'not checked'
   if (c.field === 'still_used') return v ? 'Yes' : 'No'
   if (c.field === 'same') {
