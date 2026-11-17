@@ -200,3 +200,8 @@ body.view .x, body.view .add { display: none; }
 .size .row { flex: 1 1 200px; }
 .size .err { flex-basis: 100%; }
 .line .was { grid-column: 1 / -1; font-size: 12px; color: var(--mid); }
+
+.m-row input { flex: 0 0 auto; width: 84px; min-width: 0; }
+.m-row .m-share, .m-row .m-count, .m-row .m-grams { flex: 0 0 auto; width: 76px; }
+.m-row { gap: 6px; flex-wrap: nowrap; }
+.m-row span { white-space: nowrap; }

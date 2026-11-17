@@ -315,9 +315,9 @@ function measureCard(m) {
     <h3>${esc(m.name)} <span class="n">used in ${users.length} recipe${users.length === 1 ? '' : 's'}</span></h3>
     ${Object.keys(fr).length ? `<p class="small">Written now as ${Object.entries(fr).sort((a, b) => b[1] - a[1]).map(([q, c]) => `${trimN(+q)} of one (${c})`).join(', ')}.</p>` : ''}
     <div class="m-row"><span>1</span><input class="m-unit-w" type="text" maxlength="20" value="${esc(m.unit)}" aria-label="Kitchen unit"${ro()}>
-      <span>=</span><input class="m-share" type="text" inputmode="decimal" value="${esc(shareVal)}" placeholder="${esc(hintShare || '0.09')}" aria-label="Part of one pack"${ro()}>
+      <span>=</span><input class="m-share" type="text" inputmode="decimal" value="${esc(shareVal)}" placeholder="${esc(hintShare)}" aria-label="Part of one pack"${ro()}>
       <span>of a</span><input class="m-pack-w" type="text" maxlength="20" value="${esc(m.pack)}" aria-label="What it comes in"${ro()}></div>
-    <div class="m-row"><span>or 1 ${esc(m.pack)} =</span><input class="m-count" type="text" inputmode="decimal" value="${esc(countVal)}" placeholder="${esc(hintCount || '11')}" aria-label="How many in one pack"${ro()}><span>${esc(m.unit)}s</span></div>
+    <div class="m-row"><span>or 1 ${esc(m.pack)} =</span><input class="m-count" type="text" inputmode="decimal" value="${esc(countVal)}" placeholder="${esc(hintCount)}" aria-label="How many in one pack"${ro()}><span>${esc(m.unit)}s</span></div>
     <div class="m-row"><span>1 ${esc(m.unit)} weighs</span><input class="m-grams" type="text" inputmode="decimal" value="${m.grams ?? ''}" placeholder="optional" aria-label="Weight of one piece in grams"${ro()}><span>g</span></div>
     ${share ? '' : `<p class="warn">Not set yet. Recipes using it keep the amount as it was written until you set it.</p>`}
     <details class="m-users"><summary>The recipes that use it</summary><ul>${reads}</ul></details>
@@ -733,7 +733,7 @@ function said(field, v) {
   if (field === 'kind') return v === 'batch' ? 'Batch' : 'Sold'
   return esc(typeof v === 'string' ? v : JSON.stringify(v))
 }
-const lineWords = (l) => `${fmtQty(l.qty, l.unit) || 'no amount'} ${l.name}`
+const lineWords = (l) => `${l.unit === 'piece' && S.measures.get(l.measure) ? plural(l.qty, S.measures.get(l.measure).unit) : fmtQty(l.qty, l.unit) || 'no amount'} ${l.name}`
 function listDiff(before, after) {
   const b = new Map((before || []).map((l) => [l.id, l]))
   const a = new Map((after || []).map((l) => [l.id, l]))
