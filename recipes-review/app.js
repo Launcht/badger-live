@@ -383,7 +383,11 @@ function onShared(e, final) {
       const isShare = t.classList.contains('m-share')
       const raw = t.value.trim().replace(',', '.')
       const other = box.querySelector(isShare ? '.m-count' : '.m-share')
-      if (raw === '') { next.how = null; next.value = null; good(t) } else {
+      if (raw === '') {
+        // emptying the box she is not using changes nothing; emptying the one in use un-sets the measure
+        if (m.how === (isShare ? 'share' : 'count')) { next.how = null; next.value = null }
+        good(t)
+      } else {
         const q = Number(raw)
         const okv = isShare ? q > 0 && q <= 1 : q >= 1 && q <= 10000
         if (!Number.isFinite(q) || !okv) { bad(t, isShare ? `one ${next.unit} is part of one ${next.pack}: a number above nought and up to 1, like 0.09.` : `how many ${next.unit}s in one ${next.pack}: a number like 11.`); return }
