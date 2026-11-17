@@ -178,13 +178,17 @@ function measured(l) {
   if (l.unit === 'piece') return { show: l.qty, unit: 'piece', flag: shareOf(m) ? null : `Set what one ${m.unit} is under "How we measure things" at the top.`, m }
   if (!p) return { show: l.qty, unit: l.unit, flag: `Set what one ${m.unit} is under "How we measure things" at the top, and this reads in ${m.unit}s.`, m }
   if (p.clean) return { show: p.n, unit: 'piece', flag: null, m }
-  return { show: l.qty, unit: l.unit, flag: `${trimN(l.qty)} of one ${m.pack} is ${trimN(p.n)} ${m.unit}s, which does not come out even. Please type how many ${m.unit}s.`, m }
+  return { show: l.qty, unit: l.unit, flag: `${trimN(l.qty)} of a ${m.pack} is ${trimN(p.n)} ${m.unit}s, which does not come out even. Please type how many ${m.unit}s.`, m }
 }
+
+// a suggestion we filled in: a small mark; what it was only on tap or hover
+const sugMark = (was) => `<details class="sug" title="${esc(was)}"><summary>Suggested</summary><span>${esc(was)} Change it if it is wrong.</span></details>`
 
 function lineRow(l, path, r) {
   const mm = measured(l)
   const shownUnit = mm ? mm.unit : l.unit
-  const units = [...(mm ? [['piece', mm.m.unit]] : []), ...UNITS.filter((u) => u !== 'piece').map((u) => [u, UNIT_WORDS[u]])]
+  // "of one" is never offered (Tarryn, 17/11/2026: "0.009 etc. is ridiculous"); only shown on a line still written so
+  const units = [...(mm ? [['piece', mm.m.unit]] : []), ...UNITS.filter((u) => u !== 'piece' && (u !== 'part' || l.unit === 'part')).map((u) => [u, UNIT_WORDS[u]])]
     .map(([u, w]) => `<option value="${u}"${u === shownUnit ? ' selected' : ''}>${esc(w)}</option>`).join('')
   const flag = mm ? mm.flag : l.flag
   return `<div class="line" data-path="${esc(path)}" data-id="${esc(l.id)}">
@@ -195,7 +199,7 @@ function lineRow(l, path, r) {
     ${S.canEdit ? `<button type="button" class="x" data-act="del-line" aria-label="Remove">${X}</button>` : ''}
     ${r && path.startsWith('choices.') ? whenSelect(r, l, path) : ''}
     ${flag ? `<div class="flag">${esc(flag)}</div>` : ''}
-    ${mm && l.unit !== 'piece' && mm.unit === 'piece' ? `<div class="was">Written as ${esc(trimN(l.qty))} of one ${esc(mm.m.pack)}</div>` : ''}
+    ${l.sug ? sugMark(`Was ${l.sug.was}.`) : ''}
   </div>`
 }
 
@@ -241,7 +245,7 @@ function bodyHtml(r) {
   const makes = r.kind === 'batch' ? `<div class="field"><label>Makes how much <span class="req">needed</span></label>
       <div class="row"><input class="m-qty" type="text" inputmode="decimal" value="${r.makes ? r.makes.qty : ''}" placeholder="Amount" aria-label="Makes how much"${ro()}>
       <select class="m-unit" aria-label="Unit"${ro()}>${MAKES_UNITS.map((u) => `<option value="${u}"${r.makes && r.makes.unit === u ? ' selected' : ''}>${u === 'portion' ? 'portions' : u}</option>`).join('')}</select></div>
-      ${r.makes ? '' : '<p class="warn">Please fill this in: dishes that use this batch cannot be costed without it.</p>'}</div>` : ''
+      ${r.makes ? (isSuggestedSize(r) ? sugMark(`I added up the ingredients: ${r.seed.makes_suggested.how}.`) : '') : '<p class="warn">Please fill this in: dishes that use this batch cannot be costed without it.</p>'}</div>` : ''
   return `${info}
     <div class="field"><label>Name</label><input class="r-name" type="text" maxlength="120" value="${esc(r.name)}"${ro()}></div>
     <div class="field"><label>Type</label><div class="seg">
@@ -292,50 +296,42 @@ function measureLines(key) {
   return out
 }
 
+const isSuggestedSize = (r) => r.seed && r.seed.makes_suggested && r.makes && r.makes.qty === r.seed.makes_suggested.qty && r.makes.unit === r.seed.makes_suggested.unit
+const isSuggestedMeasure = (m) => !m.touched_at && m.how === 'share' && m.value === 0.045
+
 function measureCard(m) {
   const users = measureLines(m.key)
   const share = shareOf(m)
-  const shareVal = m.how === 'share' ? m.value : ''
-  const countVal = m.how === 'count' ? m.value : ''
-  const hintShare = m.how === 'count' ? trimN(1 / m.value) : ''
-  const hintCount = m.how === 'share' ? trimN(1 / m.value) : ''
-  const fr = {}
-  for (const [, ls] of users) for (const l of ls) if (l.unit === 'part') fr[l.qty] = (fr[l.qty] || 0) + 1
-  const reads = users.map(([r, ls]) => {
-    const words = ls.map((l) => {
-      const p = piecesOf(l, m)
-      if (l.unit === 'piece') return plural(l.qty, m.unit)
-      if (p && p.clean) return plural(p.n, m.unit)
-      if (p) return `<span class="c-miss">${trimN(l.qty)} of one ${esc(m.pack)} (${trimN(p.n)} ${esc(m.unit)}s, not even)</span>`
-      return `${trimN(l.qty)} of one ${esc(m.pack)}`
-    }).join(', ')
-    return `<li><a href="#r-${esc(r.id)}" data-open="${esc(r.id)}">${esc(r.name)}</a>: ${words}</li>`
-  }).join('')
+  const says = share ? `1 ${m.unit} = ${trimN(share)} of a ${m.pack}, about ${Math.round(1 / share)} ${m.unit}s a ${m.pack}` : 'not set'
+  const reads = users.map(([r, ls]) => `<li><a href="#r-${esc(r.id)}" data-open="${esc(r.id)}">${esc(r.name)}</a>: ${ls.map((l) => (l.unit === 'piece' ? plural(l.qty, m.unit) : esc(fmtQty(l.qty, l.unit)))).join(', ')}</li>`).join('')
   return `<div class="measure" data-key="${esc(m.key)}">
-    <h3>${esc(m.name)} <span class="n">used in ${users.length} recipe${users.length === 1 ? '' : 's'}</span></h3>
-    ${Object.keys(fr).length ? `<p class="small">Written now as ${Object.entries(fr).sort((a, b) => b[1] - a[1]).map(([q, c]) => `${trimN(+q)} of one (${c})`).join(', ')}.</p>` : ''}
-    <div class="m-row"><span>1</span><input class="m-unit-w" type="text" maxlength="20" value="${esc(m.unit)}" aria-label="Kitchen unit"${ro()}>
-      <span>=</span><input class="m-share" type="text" inputmode="decimal" value="${esc(shareVal)}" placeholder="${esc(hintShare)}" aria-label="Part of one pack"${ro()}>
-      <span>of a</span><input class="m-pack-w" type="text" maxlength="20" value="${esc(m.pack)}" aria-label="What it comes in"${ro()}></div>
-    <div class="m-row"><span>or 1 ${esc(m.pack)} =</span><input class="m-count" type="text" inputmode="decimal" value="${esc(countVal)}" placeholder="${esc(hintCount)}" aria-label="How many in one pack"${ro()}><span>${esc(m.unit)}s</span></div>
-    <div class="m-row"><span>1 ${esc(m.unit)} weighs</span><input class="m-grams" type="text" inputmode="decimal" value="${m.grams ?? ''}" aria-label="Weight of one piece in grams"${ro()}><span>g, if you know it</span></div>
-    ${share ? '' : `<p class="warn">Not set yet. Recipes using it keep the amount as it was written until you set it.</p>`}
-    <details class="m-users"><summary>The recipes that use it</summary><ul>${reads}</ul></details>
+    <div class="m-head"><div><h3>${esc(m.name)}</h3><p class="m-says">${esc(says)}${m.grams ? `, ${trimN(m.grams)} g each` : ''} ${isSuggestedMeasure(m) ? sugMark('Tarryn\'s figure: 0.09 of a loaf is 2 slices.') : ''}</p></div>
+      ${S.canEdit ? '<button type="button" class="btn ghost m-change" data-act="m-change">Change</button>' : ''}</div>
+    <div class="m-edit" hidden>
+      <div class="m-row"><span>1</span><input class="m-unit-w" type="text" maxlength="20" value="${esc(m.unit)}" aria-label="Kitchen unit"${ro()}>
+        <span>=</span><input class="m-share" type="text" inputmode="decimal" value="${m.how === 'share' ? esc(m.value) : ''}" placeholder="${m.how === 'count' ? esc(trimN(1 / m.value)) : ''}" aria-label="Part of one pack"${ro()}>
+        <span>of a</span><input class="m-pack-w" type="text" maxlength="20" value="${esc(m.pack)}" aria-label="What it comes in"${ro()}></div>
+      <div class="m-row"><span>or 1 ${esc(m.pack)} =</span><input class="m-count" type="text" inputmode="decimal" value="${m.how === 'count' ? esc(m.value) : ''}" placeholder="${m.how === 'share' ? esc(trimN(1 / m.value)) : ''}" aria-label="How many in one pack"${ro()}><span>${esc(m.unit)}s</span></div>
+      <div class="m-row"><span>1 ${esc(m.unit)} weighs</span><input class="m-grams" type="text" inputmode="decimal" value="${m.grams ?? ''}" aria-label="Weight of one piece in grams"${ro()}><span>g, if you know it</span></div>
+    </div>
+    <details class="m-users"><summary>Used in ${users.length} recipe${users.length === 1 ? '' : 's'}</summary><ul>${reads}</ul></details>
   </div>`
 }
 
 function renderShared() {
-  const ms = [...S.measures.values()].map((m) => [m, measureLines(m.key).length])
-    .sort((a, b) => b[1] - a[1] || Number(/bread|loaf/i.test(b[0].name)) - Number(/bread|loaf/i.test(a[0].name)) || a[0].name.localeCompare(b[0].name))
-  $('#measures').innerHTML = ms.length ? `<h2>How we measure things</h2>
-    <p class="small">These come in a pack but are used a bit at a time, in more than one recipe. Say once what the kitchen measure is, and every recipe that uses it changes with it. A recipe can still use more or fewer.</p>
-    ${ms.map(([m]) => measureCard(m)).join('')}` : ''
+  const ms = [...S.measures.values()].map((m) => [m, measureLines(m.key).length]).filter(([, n]) => n > 0)
+    .sort((a, b) => b[1] - a[1] || a[0].name.localeCompare(b[0].name))
+  $('#measures').innerHTML = `<h2>How we measure things</h2>
+    <p class="small">I have filled these in. Change any that are wrong and every recipe follows.</p>
+    <ul class="standards"><li><b>Bread:</b> slices</li><li><b>Liquids:</b> ml</li><li><b>Solids, spices, sauces and meat:</b> grams</li><li><b>Whole things:</b> counted (1 egg, 1 roll, 1 sachet, 1 box)</li></ul>
+    ${ms.map(([m]) => measureCard(m)).join('')}`
   const batches = S.recipes.filter((r) => r.seed && r.seed.needs_makes && !r.left_out)
   $('#sizes').innerHTML = batches.length ? `<h2>How much each batch makes</h2>
-    <p class="small">Loyverse never recorded this. Dishes that use a batch cannot be costed until it is filled in. It is the same box as on the batch's own card.</p>
+    <p class="small">Loyverse never recorded this, so I added up each batch's ingredients. Change any that are wrong: it is the same box as on the batch's own card.</p>
     ${batches.map((r) => `<div class="size" data-id="${esc(r.id)}"><a href="#r-${esc(r.id)}" data-open="${esc(r.id)}">${esc(r.name)}</a>
       <div class="row"><input class="s-qty" type="text" inputmode="decimal" value="${r.makes ? r.makes.qty : ''}" placeholder="Amount" aria-label="${esc(r.name)} makes how much"${ro()}>
-      <select class="s-unit" aria-label="Unit"${ro()}>${MAKES_UNITS.map((u) => `<option value="${u}"${r.makes && r.makes.unit === u ? ' selected' : ''}>${u === 'portion' ? 'portions' : u}</option>`).join('')}</select></div></div>`).join('')}` : ''
+      <select class="s-unit" aria-label="Unit"${ro()}>${MAKES_UNITS.map((u) => `<option value="${u}"${r.makes && r.makes.unit === u ? ' selected' : ''}>${u === 'portion' ? 'portions' : u}</option>`).join('')}</select></div>
+      ${isSuggestedSize(r) ? sugMark(`I added up the ingredients: ${r.seed.makes_suggested.how}.`) : ''}</div>`).join('')}` : ''
 }
 
 // after a measure changes: every open recipe using it redraws (amounts and costs), the counts on top too
@@ -411,8 +407,12 @@ function onShared(e, final) {
     if (final) {
       convertLines(m.key)
       const open = box.querySelector('.m-users').open
+      m.touched_at = m.touched_at || new Date().toISOString()
       box.outerHTML = measureCard(m)
-      document.querySelector(`.measure[data-key="${CSS.escape(m.key)}"] .m-users`).open = open
+      const nb = document.querySelector(`.measure[data-key="${CSS.escape(m.key)}"]`)
+      nb.querySelector('.m-users').open = open
+      nb.querySelector('.m-edit').hidden = false
+      nb.querySelector('.m-change').textContent = 'Done'
     }
     afterMeasure(m.key)
     return
@@ -511,6 +511,7 @@ function onLineInput(r, lineEl, target, final) {
     else if (Number.isFinite(Number(q)) && Number(q) > 0) l.qty = Number(q)
     else { bad(target, 'the amount must be a number above nought, like 150 or 0.5.'); return }
     if (unitShown === 'piece') l.unit = 'piece' // she typed slices: the line now says slices
+    delete l.sug; delete l.adj // her own number now, exactly
     good(target)
   } else if (target.classList.contains('l-unit')) {
     if (target.value === 'piece' && l.unit !== 'piece') {
@@ -522,6 +523,7 @@ function onLineInput(r, lineEl, target, final) {
       good(box)
     }
     l.unit = target.value
+    delete l.sug; delete l.adj
   } else if (target.classList.contains('l-when-sel')) {
     if (!final) return
     const [g, o] = target.value.split('|')
@@ -685,6 +687,13 @@ function wire() {
   main.addEventListener('input', (e) => (e.target.closest('#measures, #sizes') ? onShared(e, false) : onEdit(e, false)))
   main.addEventListener('change', (e) => (e.target.closest('#measures, #sizes') ? onShared(e, true) : onEdit(e, true)))
   main.addEventListener('click', (e) => {
+    const ch = e.target.closest('[data-act="m-change"]')
+    if (ch) {
+      const ed = ch.closest('.measure').querySelector('.m-edit')
+      ed.hidden = !ed.hidden
+      ch.textContent = ed.hidden ? 'Change' : 'Done'
+      return
+    }
     const a = e.target.closest('#measures [data-open], #sizes [data-open]')
     if (!a) return
     const card = document.getElementById(`r-${a.dataset.open}`)

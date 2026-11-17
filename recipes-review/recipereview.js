@@ -79,6 +79,16 @@ function cleanLine(l) {
   const out = { id: LID.test(String(l.id || '')) ? String(l.id) : newId(), name: name.value, qty, unit: l.unit, item, batch, price, was: side(l.was), flag: side(l.flag) }
   if (when) out.when = when
   if (measure) out.measure = measure
+  // a suggested line (Tarryn, 17/11/2026): what it was, and the rounding kept so the cost does not drift
+  if (l.adj != null) {
+    const adj = num(l.adj)
+    if (!Number.isFinite(adj) || adj < 0.9 || adj > 1.1) return no(`${name.value}: its amount could not be read.`)
+    if (adj !== 1) out.adj = adj
+  }
+  if (l.sug != null) {
+    if (typeof l.sug !== 'object' || typeof l.sug.was !== 'string') return no(`${name.value}: its suggestion could not be read.`)
+    out.sug = { was: l.sug.was.slice(0, LIMIT.lineText) }
+  }
   return ok(out)
 }
 
@@ -216,6 +226,11 @@ const MEASURE = { g: 'by weight', ml: 'by volume', each: 'each', slice: 'by the 
  * Loyverse or Odoo price, then nothing: { rand: null, missing: '<ingredient>...' }. Never a nought for a missing price.
  */
 export function lineCost(line, ctx, seen = new Set()) {
+  // a rounded suggestion carries its difference: 2 slices that were 0.091 of a loaf cost 0.091 of a loaf
+  if (line.adj && line.adj !== 1) {
+    const c = lineCost({ ...line, adj: null }, ctx, seen)
+    return c.rand === null ? c : { ...c, rand: c.rand * line.adj }
+  }
   if (line.qty == null) return { rand: null, missing: `${line.name}: no amount`, from: null }
   if (line.unit === 'piece') {
     const m = line.measure && ctx.measures ? ctx.measures.get(line.measure) : null

@@ -205,3 +205,15 @@ body.view .x, body.view .add { display: none; }
 .m-row .m-share, .m-row .m-count, .m-row .m-grams { flex: 0 0 auto; width: 76px; }
 .m-row { gap: 6px; flex-wrap: nowrap; }
 .m-row span { white-space: nowrap; }
+
+/* Kitchen units filled in (17/11/2026) */
+.standards { margin: 0 0 12px; padding-left: 18px; font-size: 14px; }
+.m-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.m-head h3 { margin: 0 0 2px; }
+.m-says { margin: 0; font-size: 14px; color: var(--slate); }
+.m-change { flex: none; }
+.sug { display: inline-block; font-size: 12px; color: var(--mid); grid-column: 1 / -1; }
+.sug summary { display: inline-flex; align-items: center; min-height: 32px; padding: 0 10px; border-radius: 12px; background: #eef4fb; color: #23415f; cursor: pointer; list-style: none; font-weight: 600; }
+.sug summary::-webkit-details-marker { display: none; }
+.sug[open] span { display: block; margin-top: 4px; }
+.size .sug { flex-basis: 100%; }
