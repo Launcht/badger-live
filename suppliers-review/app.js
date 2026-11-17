@@ -122,6 +122,8 @@ const SRC = { odoo: 'Odoo', loyverse: 'Loyverse', both: 'Odoo and Loyverse', new
 const ro = () => (S.canEdit ? '' : ' disabled')
 const sugTag = (s, f) => {
   if (!stillSuggested(s, f)) return ''
+  // a name is only our suggestion where I tidied Odoo's capitals; otherwise it is simply her own name for them
+  if (f === 'name' && !(s.seed && s.seed.name_was)) return ''
   const was = f === 'name' && s.seed.name_was ? ` title="${esc(`Odoo says: ${s.seed.name_was}`)}"` : ''
   return `<span class="tag${was ? ' was' : ''}"${was}>Suggested</span>`
 }
