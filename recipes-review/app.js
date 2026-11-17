@@ -117,11 +117,12 @@ addEventListener('beforeunload', (e) => {
 // ---------------------------------------------------------------- the cost, worked out, never typed
 
 const ctx = () => ({ items: S.itemById, recipes: S.byId, measures: S.measures })
+const money = (n) => (n < 1 ? `${Math.max(1, Math.round(n * 100))}c` : fmtRand(n))
 const fromWords = (c) => (c.from === 'Kitchen items' ? 'kitchen price' : c.from === 'Batch' ? 'from the batch' : `${c.from} price`)
 const lineCostHtml = (l) => {
   const c = lineCost(l, ctx())
   if (c.rand !== null && c.rand < 0.005) return `under 1c<small>${esc(fromWords(c))}</small>`
-  return c.rand !== null ? `${fmtRand(c.rand)}<small>${esc(fromWords(c))}</small>` : '<span class="c-miss">no price</span>'
+  return c.rand !== null ? `${money(c.rand)}<small>${esc(fromWords(c))}</small>` : '<span class="c-miss">no price</span>'
 }
 function costHtml(r) {
   const c = recipeCost(r, ctx())
@@ -130,7 +131,10 @@ function costHtml(r) {
     : `<span class="c-miss">${label}: ${x.so_far > 0 ? `${fmtRand(x.so_far)} so far` : 'not worked out yet'}</span>`)
   const bits = [part(r.kind === 'batch' ? 'the whole batch' : 'eat in', c.eat)]
   if (c.away) bits.push(part('take away', c.away))
-  if (r.kind === 'batch' && r.makes && c.eat.rand !== null) bits.push(`<span class="c-ok">${fmtRand(c.eat.rand / r.makes.qty)} per ${r.makes.unit === 'portion' ? 'portion' : esc(r.makes.unit)}</span>`)
+  if (r.kind === 'batch' && r.makes && c.eat.rand !== null) {
+    const big = { g: ['kg', 1000], ml: ['L', 1000] }[r.makes.unit]
+    bits.push(big ? `<span class="c-ok">${fmtRand((c.eat.rand / r.makes.qty) * big[1])} per ${big[0]}</span>` : `<span class="c-ok">${money(c.eat.rand / r.makes.qty)} per ${r.makes.unit === 'portion' ? 'portion' : esc(r.makes.unit)}</span>`)
+  }
   const sells = r.seed && r.seed.sells ? `<span class="sells">Sells for ${fmtRand(r.seed.sells)}</span>` : ''
   const miss = [...new Set([...c.eat.missing, ...(c.away ? c.away.missing : [])])]
   return `<div class="cost-line"><span class="lbl">Cost to make</span>${bits.join(SEP)}${sells}</div>`
@@ -199,7 +203,7 @@ function lineRow(l, path, r) {
     ${S.canEdit ? `<button type="button" class="x" data-act="del-line" aria-label="Remove">${X}</button>` : ''}
     ${r && path.startsWith('choices.') ? whenSelect(r, l, path) : ''}
     ${flag ? `<div class="flag">${esc(flag)}</div>` : ''}
-    ${l.sug ? sugMark(`Was ${l.sug.was}.`) : ''}
+    ${l.sug ? sugMark(/^m-(sourdough|health)/.test(l.measure || '') ? 'Bread at 12 slices a loaf, Tarryn\'s figure.' : l.pack ? 'Ticked for you.' : 'Worked out from how Loyverse had it.') : ''}
   </div>`
 }
 
@@ -311,41 +315,42 @@ function measureLines(key) {
   const out = []
   for (const r of S.recipes) {
     if (r.left_out) continue
-    const ls = [...r.ingredients, ...r.choices.flatMap((g) => g.options.flatMap((o) => o.lines))].filter((l) => l.measure === key)
+    const ls = [...r.ingredients, ...r.takeaway, ...r.choices.flatMap((g) => g.options.flatMap((o) => o.lines))].filter((l) => l.measure === key)
     if (ls.length) out.push([r, ls])
   }
   return out
 }
 
 const isSuggestedSize = (r) => r.seed && r.seed.makes_suggested && r.makes && r.makes.qty === r.seed.makes_suggested.qty && r.makes.unit === r.seed.makes_suggested.unit
-const isSuggestedMeasure = (m) => !m.touched_at && m.how === 'share' && m.value === 0.045
+const isSuggestedMeasure = (m) => m.suggested && !m.touched_at
+const GROUP_ORDER = ['Bread', 'Fruit and veg', 'Dairy', 'Meat', 'Dry goods and spices', 'Sauces', 'Drinks', 'Packaging']
+const plur = (n, w) => (n === 1 || /s$/.test(w) || w === 'g' || w === 'ml' ? w : `${w}s`)
 
+// One short row per ingredient, as the kitchen buys it (Tarryn, 17/11/2026: "a loaf of bread is bought - how many slices
+// are in that loaf"): 1 loaf (R54.00) = [12] slices. Counted things change with one tap; weight and volume are as
+// priced (1 kg = 1000 g) and only show.
 function measureCard(m) {
   const users = measureLines(m.key)
-  const share = shareOf(m)
-  const says = share ? `1 ${m.unit} = ${trimN(share)} of a ${m.pack}, about ${Math.round(1 / share)} ${m.unit}s a ${m.pack}` : 'not set'
+  const price = m.price == null ? 'no price yet' : m.of === 'unit' ? `${money(Number(m.price))} each` : money(Number(m.price))
+  const counted = m.kind === 'count'
+  const amount = counted
+    ? `<input class="m-count" type="text" inputmode="numeric" value="${esc(trimN(m.value))}" aria-label="How many ${esc(m.unit)}s in one ${esc(m.pack)}"${ro()}>`
+    : `<b>${esc(trimN(m.value))}</b>`
   const reads = users.map(([r, ls]) => `<li><a href="#r-${esc(r.id)}" data-open="${esc(r.id)}">${esc(r.name)}</a>: ${ls.map((l) => (l.unit === 'piece' ? plural(l.qty, m.unit) : esc(fmtQty(l.qty, l.unit)))).join(', ')}</li>`).join('')
-  return `<div class="measure" data-key="${esc(m.key)}">
-    <div class="m-head"><div><h3>${esc(m.name)}</h3><p class="m-says">${esc(says)}${m.grams ? `, ${trimN(m.grams)} g each` : ''} ${isSuggestedMeasure(m) ? sugMark('Tarryn\'s figure: 0.09 of a loaf is 2 slices.') : ''}</p></div>
-      ${S.canEdit ? '<button type="button" class="btn ghost m-change" data-act="m-change">Change</button>' : ''}</div>
-    <div class="m-edit" hidden>
-      <div class="m-row"><span>1</span><input class="m-unit-w" type="text" maxlength="20" value="${esc(m.unit)}" aria-label="Kitchen unit"${ro()}>
-        <span>=</span><input class="m-share" type="text" inputmode="decimal" value="${m.how === 'share' ? esc(m.value) : ''}" placeholder="${m.how === 'count' ? esc(trimN(1 / m.value)) : ''}" aria-label="Part of one pack"${ro()}>
-        <span>of a</span><input class="m-pack-w" type="text" maxlength="20" value="${esc(m.pack)}" aria-label="What it comes in"${ro()}></div>
-      <div class="m-row"><span>or 1 ${esc(m.pack)} =</span><input class="m-count" type="text" inputmode="decimal" value="${m.how === 'count' ? esc(m.value) : ''}" placeholder="${m.how === 'share' ? esc(trimN(1 / m.value)) : ''}" aria-label="How many in one pack"${ro()}><span>${esc(m.unit)}s</span></div>
-      <div class="m-row"><span>1 ${esc(m.unit)} weighs</span><input class="m-grams" type="text" inputmode="decimal" value="${m.grams ?? ''}" aria-label="Weight of one piece in grams"${ro()}><span>g, if you know it</span></div>
-    </div>
-    <details class="m-users"><summary>Used in ${users.length} recipe${users.length === 1 ? '' : 's'}</summary><ul>${reads}</ul></details>
+  return `<div class="buy" data-key="${esc(m.key)}">
+    <div class="b-name">${esc(m.name)}</div>
+    <div class="b-eq"><span>1 ${esc(m.pack)} <small>(${esc(price)})</small> =</span>${amount}<span>${esc(plur(Number(m.value), m.unit))}</span>
+      ${isSuggestedMeasure(m) ? sugMark(/^m-(sourdough|health)/.test(m.key) ? 'Tarryn\'s figure: 12 slices a loaf.' : 'My best kitchen guess. Change it if your pack is different.') : ''}</div>
+    <details class="m-users"><summary>${users.length} recipe${users.length === 1 ? '' : 's'}</summary><ul>${reads}</ul></details>
   </div>`
 }
 
 function renderShared() {
-  const ms = [...S.measures.values()].map((m) => [m, measureLines(m.key).length]).filter(([, n]) => n > 0)
-    .sort((a, b) => b[1] - a[1] || a[0].name.localeCompare(b[0].name))
+  const ms = [...S.measures.values()].filter((m) => m.kind && measureLines(m.key).length)
+  const byGroup = GROUP_ORDER.map((g) => [g, ms.filter((m) => (m.grp || 'Dry goods and spices') === g)]).filter(([, l]) => l.length)
   $('#measures').innerHTML = `<h2>How we measure things</h2>
-    <p class="small">I have filled these in. Change any that are wrong and every recipe follows.</p>
-    <ul class="standards"><li><b>Bread:</b> slices</li><li><b>Liquids:</b> ml</li><li><b>Solids, spices, sauces and meat:</b> grams</li><li><b>Whole things:</b> counted (1 egg, 1 roll, 1 sachet, 1 box)</li></ul>
-    ${ms.map(([m]) => measureCard(m)).join('')}`
+    <p class="small">How we buy each ingredient, and what it is in the kitchen. I have filled these in. Change any that are wrong and every recipe follows.</p>
+    ${byGroup.map(([g, l], i) => `<details class="b-group"${i === 0 ? ' open' : ''}><summary>${esc(g)} <span class="n">${l.length}</span></summary>${l.map(measureCard).join('')}</details>`).join('')}`
   const batches = S.recipes.filter((r) => r.seed && r.seed.needs_makes && !r.left_out)
   $('#sizes').innerHTML = batches.length ? `<h2>How much each batch makes</h2>
     <p class="small">Loyverse never recorded this, so I added up each batch's ingredients. Change any that are wrong: it is the same box as on the batch's own card.</p>
@@ -387,53 +392,22 @@ function convertLines(key) {
 function onShared(e, final) {
   if (!S.canEdit) return
   const t = e.target
-  const box = t.closest('.measure')
+  const box = t.closest('.buy')
   if (box) {
     const m = S.measures.get(box.dataset.key)
-    const v = (sel) => box.querySelector(sel).value.trim().replace(',', '.')
-    const next = { unit: v('.m-unit-w'), pack: v('.m-pack-w'), how: m.how ?? null, value: m.value ?? null, grams: m.grams ?? null }
-    if (!next.unit) { bad(box.querySelector('.m-unit-w'), 'say what one piece is called, like slice.'); return }
-    good(box.querySelector('.m-unit-w'))
-    if (!next.pack) { bad(box.querySelector('.m-pack-w'), 'say what it comes in, like loaf.'); return }
-    good(box.querySelector('.m-pack-w'))
-    if (t.classList.contains('m-share') || t.classList.contains('m-count')) {
-      const isShare = t.classList.contains('m-share')
-      const raw = t.value.trim().replace(',', '.')
-      const other = box.querySelector(isShare ? '.m-count' : '.m-share')
-      if (raw === '') {
-        // emptying the box she is not using changes nothing; emptying the one in use un-sets the measure
-        if (m.how === (isShare ? 'share' : 'count')) { next.how = null; next.value = null }
-        good(t)
-      } else {
-        const q = Number(raw)
-        const okv = isShare ? q > 0 && q <= 1 : q >= 1 && q <= 10000
-        if (!Number.isFinite(q) || !okv) { bad(t, isShare ? `one ${next.unit} is part of one ${next.pack}: a number above nought and up to 1, like 0.09.` : `how many ${next.unit}s in one ${next.pack}: a number like 11.`); return }
-        good(t)
-        next.how = isShare ? 'share' : 'count'
-        next.value = q
-        other.value = ''
-        other.placeholder = trimN(1 / q)
-        good(other)
-      }
-    }
-    if (t.classList.contains('m-grams')) {
-      const raw = t.value.trim().replace(',', '.')
-      if (raw === '') next.grams = null
-      else if (Number.isFinite(Number(raw)) && Number(raw) > 0) next.grams = Number(raw)
-      else { bad(t, 'the weight must be a number of grams above nought.'); return }
-      good(t)
-    }
-    Object.assign(m, next)
-    save(`M:${m.key}`, 'measure', { unit: m.unit, pack: m.pack, how: m.how, value: m.value, grams: m.grams }, final ? 0 : 900)
+    if (!t.classList.contains('m-count')) return
+    const raw = t.value.trim().replace(',', '.')
+    const q = Number(raw)
+    if (!(raw !== '' && Number.isFinite(q) && q >= 1 && q <= 1000000)) { bad(t, `how many ${m.unit}s in one ${m.pack}: a whole number, like 12.`); return }
+    good(t)
+    m.how = 'count'
+    m.value = q
+    save(`M:${m.key}`, 'measure', { unit: m.unit, pack: m.pack, how: 'count', value: q, grams: m.grams ?? null }, final ? 0 : 900)
     if (final) {
-      convertLines(m.key)
-      const open = box.querySelector('.m-users').open
       m.touched_at = m.touched_at || new Date().toISOString()
-      box.outerHTML = measureCard(m)
-      const nb = document.querySelector(`.measure[data-key="${CSS.escape(m.key)}"]`)
-      nb.querySelector('.m-users').open = open
-      nb.querySelector('.m-edit').hidden = false
-      nb.querySelector('.m-change').textContent = 'Done'
+      const sug = box.querySelector('.b-eq .sug')
+      if (sug) sug.remove()
+      box.querySelector('.b-eq > span:last-of-type').textContent = plur(q, m.unit)
     }
     afterMeasure(m.key)
     return
@@ -673,7 +647,7 @@ function wire() {
       const p = S.packaging.find((x) => x.key === key)
       const i = r.takeaway.findIndex((l) => l.pack === key)
       if (i >= 0) r.takeaway.splice(i, 1)
-      else r.takeaway.push({ id: nid(), name: p.name, qty: 1, unit: 'each', item: p.item, batch: null, price: p.price, was: null, flag: null, pack: key })
+      else r.takeaway.push({ id: nid(), name: p.name, qty: 1, unit: 'each', item: p.item, batch: null, price: p.price, was: null, flag: null, pack: key, ...(p.measure ? { measure: p.measure } : {}) })
       save(r.id, 'takeaway', r.takeaway)
       rerenderBody(r)
       return

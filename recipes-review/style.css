@@ -231,3 +231,18 @@ body.view .x, body.view .add { display: none; }
 .pk-other { margin: 12px 0 4px; font-size: 13px; font-weight: 600; color: var(--slate); }
 .presets { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
 @media (min-width: 700px) { .pks { grid-template-columns: 1fr 1fr; } }
+
+/* How we buy it: one short row per ingredient (17/11/2026) */
+.b-group { background: var(--card); border: 1px solid var(--line); border-radius: 12px; margin-bottom: 8px; padding: 0 12px; }
+.b-group > summary { min-height: 48px; display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 600; list-style: none; }
+.b-group > summary::-webkit-details-marker { display: none; }
+.b-group > summary::after { content: '+'; margin-left: auto; color: var(--mid); font-size: 20px; }
+.b-group[open] > summary::after { content: '-'; }
+.buy { padding: 8px 0; border-top: 1px solid var(--line); }
+.b-name { font-weight: 600; font-size: 15px; }
+.b-eq { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 14px; color: var(--slate); margin-top: 2px; }
+.b-eq small { color: var(--mid); }
+.b-eq input { width: 72px; min-height: 40px; padding: 4px 8px; text-align: center; }
+.buy .m-users { margin-top: 0; font-size: 13px; }
+.buy .m-users summary { min-height: 32px; font-weight: 400; color: var(--mid); }
+.buy .err { flex-basis: 100%; }

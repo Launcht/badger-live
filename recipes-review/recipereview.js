@@ -159,7 +159,7 @@ function cleanMeasure(v) {
     if (v.how !== 'share' && v.how !== 'count') return no('Pick how you want to say it.')
     value = num(v.value)
     if (v.how === 'share' && !(Number.isFinite(value) && value > 0 && value <= 1)) return no(`One ${unit.value} must be part of one ${pack.value}: a number above nought and up to 1, like 0.09.`)
-    if (v.how === 'count' && !(Number.isFinite(value) && value >= 1 && value <= 10000)) return no(`How many ${unit.value}s in one ${pack.value}: a number like 11.`)
+    if (v.how === 'count' && !(Number.isFinite(value) && value >= 1 && value <= 1000000)) return no(`How many ${unit.value}s in one ${pack.value}: a number like 12.`)
     how = v.how
   }
   let grams = null
@@ -237,6 +237,18 @@ export function lineCost(line, ctx, seen = new Set()) {
     return c.rand === null ? c : { ...c, rand: c.rand * line.adj }
   }
   if (line.qty == null) return { rand: null, missing: `${line.name}: no amount`, from: null }
+  // How we buy it (Tarryn, 17/11/2026): a line on an ingredient's buy row costs its amount / the kitchen units in the
+  // pack x the pack price (2 slices of a 12-slice R55 loaf is 2/12 of R55); where the price we hold is for one unit
+  // (an egg), the amount x that price.
+  const bm = line.measure && ctx.measures ? ctx.measures.get(line.measure) : null
+  if (bm && bm.kind && bm.value > 0 && bm.price != null && !line.batch) {
+    const b = line.unit === 'piece' ? { q: line.qty, u: 'count' } : toBase(line.qty, line.unit)
+    const fits = bm.kind === 'count' ? b && ['count', 'each', 'slice', 'portion'].includes(b.u) : b && b.u === bm.kind
+    if (fits) {
+      const per = bm.of === 'unit' ? Number(bm.price) : Number(bm.price) / bm.value
+      return { rand: b.q * per, missing: null, from: bm.from === 'Kitchen items' ? 'Kitchen items' : bm.from || 'Odoo' }
+    }
+  }
   if (line.unit === 'piece') {
     const m = line.measure && ctx.measures ? ctx.measures.get(line.measure) : null
     const share = shareOf(m)
