@@ -253,10 +253,7 @@ body.view .x, body.view .add { display: none; }
 .sup .head { display: block; padding: 12px 12px 4px; }
 .sup .r-title { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .supplies { margin: 6px 0 0; font-size: 13px; color: var(--slate); }
-.supplies details { display: inline; }
-.supplies summary { display: inline; cursor: pointer; color: var(--accentInk); font-weight: 600; list-style: none; }
-.supplies summary::-webkit-details-marker { display: none; }
-.supplies details[open] summary { display: none; }
+.more-items { border: 0; background: none; padding: 4px 0; min-height: 32px; color: var(--accentInk); font-weight: 600; font-size: 13px; cursor: pointer; }
 .sup .fix, .sup .check, .sup .ask, .sup .info { margin: 8px 12px 0; }
 .ask { padding: 10px; border-radius: 10px; background: #eef4fb; color: #23415f; font-size: 14px; }
 .ask p { margin: 0 0 8px; }

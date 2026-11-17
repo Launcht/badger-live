@@ -135,7 +135,7 @@ function suppliesHtml(s) {
   if (!all.length) return `${note}${note ? '' : '<p class="supplies">No items on record for them.</p>'}`
   const first = all.slice(0, 4).map(esc).join(', ')
   const rest = all.slice(4)
-  return `<p class="supplies">Supplies: ${first}${rest.length ? ` <details><summary>and ${rest.length} more</summary>, ${rest.map(esc).join(', ')}</details>` : ''}</p>${note}`
+  return `<p class="supplies">Supplies: ${first}${rest.length ? `<span class="rest" hidden>, ${rest.map(esc).join(', ')}</span> <button type="button" class="more-items" data-more>and ${rest.length} more</button>` : ''}</p>${note}`
 }
 function sourceWords(s) {
   const loy = (s.seed && s.seed.loyverse) || []
@@ -314,6 +314,9 @@ function wire() {
   main.addEventListener('input', (e) => { if (e.target.id === 'anythingElse') return onAnything(false); onField(e, false) })
   main.addEventListener('change', (e) => { if (e.target.id === 'anythingElse') return onAnything(true); onField(e, true) })
   main.addEventListener('click', (e) => {
+    // the full list of what they supply: reading, so it works on both links
+    const more = e.target.closest('[data-more]')
+    if (more) { more.previousElementSibling.hidden = false; more.remove(); return }
     const b = e.target.closest('[data-act]')
     if (!b || !S.canEdit) return
     const holder = b.closest('.card')
