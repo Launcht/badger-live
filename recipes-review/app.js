@@ -30,6 +30,37 @@ const queue = new Map() // `${recipe}|${field}` -> the value waiting to be saved
 const timers = new Map()
 let busy = false
 let lastProblem = ''
+// fields holding something that cannot be saved (test 03, finding 2): while any is left, the bar never says "Saved"
+const invalid = new Map() // element -> problem
+function bad(el, problem) {
+  if (!el.dataset.errid) el.dataset.errid = nid()
+  invalid.set(el, problem)
+  el.classList.add('bad')
+  el.setAttribute('aria-invalid', 'true')
+  let msg = document.querySelector(`.err[data-for="${el.dataset.errid}"]`)
+  if (!msg) {
+    msg = document.createElement('div')
+    msg.className = 'err'
+    msg.dataset.for = el.dataset.errid
+    el.insertAdjacentElement('afterend', msg)
+  }
+  msg.textContent = `Not saved: ${problem}`
+  showProblems()
+}
+function good(el) {
+  if (!invalid.has(el) && !el.classList.contains('bad')) return
+  invalid.delete(el)
+  el.classList.remove('bad')
+  el.removeAttribute('aria-invalid')
+  const msg = el.dataset.errid && document.querySelector(`.err[data-for="${el.dataset.errid}"]`)
+  if (msg) msg.remove()
+  showProblems()
+}
+function showProblems() {
+  for (const el of [...invalid.keys()]) if (!el.isConnected) invalid.delete(el)
+  if (invalid.size) status('bad', `Not saved: ${[...invalid.values()][0]}`)
+  else if (!queue.size && !busy && !lastProblem) status('ok', 'All changes saved')
+}
 function status(kind, text) {
   const el = $('#status')
   el.className = `status ${kind}`
@@ -67,7 +98,8 @@ async function flush() {
       lastProblem = r.body.problem || 'That could not be saved.'
       status('bad', `Not saved: ${lastProblem}`)
     }
-    if (!lastProblem) {
+    if (invalid.size) showProblems()
+    else if (!lastProblem) {
       const t = new Date()
       status('ok', `Saved ${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`)
     }
@@ -122,7 +154,18 @@ const SRC = { loyverse: 'Loyverse', odoo: 'Odoo', both: 'Loyverse and Odoo', new
 const ro = () => (S.canEdit ? '' : ' disabled')
 const usualCount = (r) => r.ingredients.length + r.choices.reduce((a, g) => a + (g.options.find((o) => o.usual) || { lines: [] }).lines.length, 0)
 
-function lineRow(l, path) {
+function whenSelect(r, l, path) {
+  const gi = +path.split('.')[1]
+  const others = r.choices.filter((g, i) => i !== gi)
+  if (!others.length && !l.when) return ''
+  const opts = ['<option value="">always</option>', ...others.flatMap((g) => g.options.map((o) => {
+    const v = `${g.id}|${o.id}`
+    return `<option value="${esc(v)}"${l.when && l.when.g === g.id && l.when.o === o.id ? ' selected' : ''}>only with ${esc(g.name)}: ${esc(o.name)}</option>`
+  }))]
+  return `<label class="l-when"><span>Counts</span><select class="l-when-sel" aria-label="When this counts"${ro()}>${opts.join('')}</select></label>`
+}
+
+function lineRow(l, path, r) {
   const units = UNITS.map((u) => `<option value="${u}"${u === l.unit ? ' selected' : ''}>${esc(UNIT_WORDS[u])}</option>`).join('')
   return `<div class="line" data-path="${esc(path)}" data-id="${esc(l.id)}">
     <input class="l-name" type="text" list="itemList" maxlength="120" value="${esc(l.name)}" aria-label="Ingredient"${ro()}>
@@ -130,12 +173,13 @@ function lineRow(l, path) {
     <select class="l-unit" aria-label="Unit"${ro()}>${units}</select>
     <span class="l-cost">${lineCostHtml(l)}</span>
     ${S.canEdit ? `<button type="button" class="x" data-act="del-line" aria-label="Remove">${X}</button>` : ''}
+    ${r && path.startsWith('choices.') ? whenSelect(r, l, path) : ''}
     ${l.flag ? `<div class="flag">${esc(l.flag)}</div>` : ''}
   </div>`
 }
 
-function linesHtml(lines, path, addLabel) {
-  return `<div class="lines">${lines.map((l) => lineRow(l, path)).join('') || '<p class="empty">Nothing here yet.</p>'}</div>
+function linesHtml(lines, path, addLabel, r) {
+  return `<div class="lines">${lines.map((l) => lineRow(l, path, r)).join('') || '<p class="empty">Nothing here yet.</p>'}</div>
     ${S.canEdit ? `<button type="button" class="add" data-act="add-line" data-path="${esc(path)}">+ ${esc(addLabel)}</button>` : ''}`
 }
 
@@ -149,7 +193,7 @@ function choicesHtml(r) {
         <input class="o-name" type="text" maxlength="60" value="${esc(o.name)}" aria-label="Choice name"${ro()}>
         ${S.canEdit ? `<button type="button" class="x" data-act="del-opt" aria-label="Remove this choice">${X}</button>` : ''}
       </div>
-      ${linesHtml(o.lines, `choices.${gi}.${oi}`, 'What it puts in')}
+      ${linesHtml(o.lines, `choices.${gi}.${oi}`, 'What it puts in', r)}
     </div>`).join('')}
     ${S.canEdit ? '<button type="button" class="add" data-act="add-opt">+ Add a choice</button>' : ''}
   </div>`).join('')
@@ -276,7 +320,8 @@ function onLineInput(r, lineEl, target, final) {
   if (!l) return
   if (target.classList.contains('l-name')) {
     const v = target.value.trim()
-    if (!v) return
+    if (!v) { bad(target, 'each ingredient needs a name.'); return }
+    good(target)
     const batch = S.recipes.find((x) => x.kind === 'batch' && x.id !== r.id && x.name.toLowerCase() === v.toLowerCase())
     const item = S.itemByName.get(v.toLowerCase())
     if (batch) { l.batch = batch.id; l.item = null; l.price = null }
@@ -287,16 +332,37 @@ function onLineInput(r, lineEl, target, final) {
     const q = target.value.trim().replace(',', '.')
     if (q === '') l.qty = null
     else if (Number.isFinite(Number(q)) && Number(q) > 0) l.qty = Number(q)
-    else { target.classList.add('bad'); return }
-    target.classList.remove('bad')
+    else { bad(target, 'the amount must be a number above nought, like 150 or 0.5.'); return }
+    good(target)
   } else if (target.classList.contains('l-unit')) {
     l.unit = target.value
+  } else if (target.classList.contains('l-when-sel')) {
+    if (!final) return
+    const [g, o] = target.value.split('|')
+    if (target.value) l.when = { g, o }
+    else delete l.when
   }
   const cost = lineEl.querySelector('.l-cost')
   if (cost) cost.innerHTML = lineCostHtml(l)
   refreshCosts()
   const field = fieldOf(path)
   save(r.id, field, r[field], final ? 0 : 800)
+}
+
+// A line "only with" a choice that is removed: with an option gone, its lines go; with a whole group gone, the lines
+// for its usual choice stay (as "always") and the rest go. The server refuses a line pointing at nothing.
+function forgetChoice(r, g, option) {
+  const usual = (g.options.find((o) => o.usual) || g.options[0] || {}).id
+  for (const x of r.choices) {
+    for (const o of x.options) {
+      o.lines = o.lines.filter((l) => {
+        if (!l.when || l.when.g !== g.id) return true
+        if (option) return l.when.o !== option.id
+        if (l.when.o === usual) { delete l.when; return true }
+        return false
+      })
+    }
+  }
 }
 
 function wire() {
@@ -348,15 +414,19 @@ function wire() {
       const lineEl = b.closest('.line')
       const arr = at(r, lineEl.dataset.path)
       const i = arr.findIndex((x) => x.id === lineEl.dataset.id)
+      if (i >= 0 && !confirm(`Remove ${arr[i].name}?`)) return
       if (i >= 0) arr.splice(i, 1)
       rerenderBody(r)
       save(r.id, fieldOf(lineEl.dataset.path), r[fieldOf(lineEl.dataset.path)])
       return
     }
     if (act === 'use-other') {
-      if (!confirm('Replace the ingredients with the Odoo list? You can change them after.')) return
-      r.ingredients = r.seed.other.ingredients.map((l) => ({ ...l, id: nid() }))
+      const o = r.seed.other
+      const size = r.kind === 'batch' && o.makes ? ` and its size (${fmtQty(o.makes.qty, o.makes.unit)})` : ''
+      if (!confirm(`Replace the ingredients with the Odoo list${size}? You can change them after.`)) return
+      r.ingredients = o.ingredients.map((l) => ({ ...l, id: nid() }))
       save(r.id, 'ingredients', r.ingredients)
+      if (size) { r.makes = { ...o.makes }; save(r.id, 'makes', r.makes) }
       rerenderBody(r)
       return
     }
@@ -367,12 +437,14 @@ function wire() {
     } else if (act === 'del-group' && g) {
       if (!confirm(`Remove the ${g.name} choices?`)) return
       r.choices.splice(+gEl.dataset.g, 1)
+      forgetChoice(r, g, null)
     } else if (act === 'add-opt' && g) {
       g.options.push({ id: nid(), name: 'New choice', usual: false, lines: [] })
     } else if (act === 'del-opt' && g) {
       const oi = +b.closest('.opt').dataset.o
       const wasUsual = g.options[oi].usual
-      g.options.splice(oi, 1)
+      const gone = g.options.splice(oi, 1)[0]
+      forgetChoice(r, g, gone)
       if (wasUsual && g.options[0]) g.options[0].usual = true
     } else if (act === 'usual' && g) {
       const oi = +b.closest('.opt').dataset.o
@@ -394,7 +466,8 @@ function wire() {
     const lineEl = t.closest('.line')
     if (lineEl) return onLineInput(r, lineEl, t, final)
     if (t.classList.contains('r-name')) {
-      if (!t.value.trim()) return
+      if (!t.value.trim()) { bad(t, 'the recipe needs a name.'); return }
+      good(t)
       r.name = t.value.trim()
       card.querySelector('.r-title').textContent = r.name
       save(r.id, 'name', r.name, final ? 0 : 800)
@@ -405,14 +478,17 @@ function wire() {
       const body = t.closest('.body')
       const raw = $('.m-qty', body).value.trim().replace(',', '.')
       const q = Number(raw)
+      const box = $('.m-qty', body)
       if (raw === '') r.makes = null
       else if (Number.isFinite(q) && q > 0) r.makes = { qty: q, unit: $('.m-unit', body).value }
-      else return
+      else { bad(box, 'how much it makes must be a number above nought, like 2 or 1.5.'); return }
+      good(box)
       refreshCosts()
       save(r.id, 'makes', r.makes, final ? 0 : 800)
     } else if (t.classList.contains('g-name') || t.classList.contains('o-name')) {
       const g = r.choices[+t.closest('.group').dataset.g]
-      if (!t.value.trim()) return
+      if (!t.value.trim()) { bad(t, 'each choice needs a name.'); return }
+      good(t)
       if (t.classList.contains('g-name')) g.name = t.value.trim()
       else g.options[+t.closest('.opt').dataset.o].name = t.value.trim()
       save(r.id, 'choices', r.choices, final ? 0 : 800)
@@ -440,7 +516,9 @@ function wire() {
     S.recipes.push(rec)
     S.byId.set(rec.id, rec)
     $('#addName').value = ''
+    const open = [...document.querySelectorAll('.card details.more[open]')].map((d) => d.closest('.card').dataset.id)
     render()
+    for (const id of open) { const d = document.querySelector(`#r-${CSS.escape(id)} details.more`); if (d) d.open = true }
     status('ok', 'Added')
     const card = document.getElementById(`r-${rec.id}`)
     if (card) { card.querySelector('details').open = true; card.scrollIntoView({ behavior: 'smooth', block: 'start' }) }
@@ -471,7 +549,9 @@ function listDiff(before, after) {
   return out.length ? `<ul>${out.join('')}</ul>` : '<ul><li>details changed</li></ul>'
 }
 function choiceWords(cs) {
-  return (cs || []).map((g) => `${g.name}: ${g.options.map((o) => `${o.usual ? '(usual) ' : ''}${o.name}${o.lines.length ? ` = ${o.lines.map(lineWords).join(', ')}` : ''}`).join(' / ')}`).join('; ')
+  const optName = (w) => { for (const g of cs || []) for (const o of g.options) if (g.id === w.g && o.id === w.o) return `${g.name} ${o.name}`; return 'a removed choice' }
+  const lw = (l) => `${lineWords(l)}${l.when ? ` (only with ${optName(l.when)})` : ''}`
+  return (cs || []).map((g) => `${g.name}: ${g.options.map((o) => `${o.usual ? '(usual) ' : ''}${o.name}${o.lines.length ? ` = ${o.lines.map(lw).join(', ')}` : ''}`).join(' / ')}`).join('; ')
 }
 function renderChanges(changes) {
   const el = $('#changes')
@@ -512,6 +592,12 @@ async function start() {
     return
   }
   const d = r.body
+  if (d.intro) {
+    document.querySelector('h1').textContent = d.intro.title
+    $('#whoLine').textContent = d.intro.sub
+    $('#notes').innerHTML = d.intro.notes
+    $('#foot').textContent = d.intro.foot
+  }
   S.canEdit = d.canEdit
   S.who = d.who
   S.recipes = d.recipes

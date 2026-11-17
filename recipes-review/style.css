@@ -172,3 +172,11 @@ body.view .x, body.view .add { display: none; }
   .body { padding: 0 16px 16px; }
   .pic { width: 84px; height: 84px; }
 }
+
+/* Fixes after the independent test (03) */
+.cat { scroll-margin-top: 64px; }
+.err { grid-column: 1 / -1; font-size: 13px; font-weight: 600; color: var(--bad); margin-top: 2px; }
+.field .err { margin-top: 6px; }
+.l-when { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--slate); }
+.l-when select { flex: 1; }
+.line .flag { grid-column: 1 / -1; }

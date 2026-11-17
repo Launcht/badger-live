@@ -65,7 +65,15 @@ function cleanLine(l) {
     price = { per, unit: p.unit, from: p.from }
   }
   const side = (v) => (v == null ? null : String(v).slice(0, LIMIT.lineText))
-  return ok({ id: LID.test(String(l.id || '')) ? String(l.id) : newId(), name: name.value, qty, unit: l.unit, item, batch, price, was: side(l.was), flag: side(l.flag) })
+  // a choice's line can count only with another choice (a double shot of whichever beans): { g: group id, o: option id }
+  let when = null
+  if (l.when != null) {
+    if (typeof l.when !== 'object' || !LID.test(String(l.when.g || '')) || !LID.test(String(l.when.o || ''))) return no(`${name.value}: its "only with" could not be read.`)
+    when = { g: String(l.when.g), o: String(l.when.o) }
+  }
+  const out = { id: LID.test(String(l.id || '')) ? String(l.id) : newId(), name: name.value, qty, unit: l.unit, item, batch, price, was: side(l.was), flag: side(l.flag) }
+  if (when) out.when = when
+  return ok(out)
 }
 
 function cleanLines(v, max) {
@@ -102,6 +110,16 @@ function cleanChoices(v) {
     if (usual > 1) return no(`${gname.value}: only one choice can be the usual one.`)
     if (usual === 0 && options.length) options[0].usual = true
     out.push({ id: LID.test(String(g.id || '')) ? String(g.id) : newId(), name: gname.value, options })
+  }
+  // every "only with" must point at a choice of ANOTHER group that is still there
+  for (const g of out) {
+    for (const o of g.options) {
+      for (const l of o.lines) {
+        if (!l.when) continue
+        const tg = out.find((x) => x.id === l.when.g)
+        if (!tg || tg === g || !tg.options.some((x) => x.id === l.when.o)) return no(`${g.name}, ${o.name}: "${l.name}" is only with a choice that is not there any more. Pick another or "always".`)
+      }
+    }
   }
   return ok(out)
 }
@@ -182,12 +200,26 @@ function sumLines(lines, ctx, seen, acc) {
  * A recipe's cost: eat in (ingredients plus the usual choice in each group) and take away (that plus the take-away
  * extras; null for a batch). Each is { rand, so_far, missing[] }: rand is null whenever anything is missing.
  */
+/** The usual choice in each group, by group id. */
+export function usualPicks(r) {
+  const picks = {}
+  for (const g of r.choices || []) { const u = g.options.find((o) => o.usual) || g.options[0]; if (u) picks[g.id] = u.id }
+  return picks
+}
+/** The lines a choice puts in, given what is picked in the other groups. */
+export function optionLines(o, picks) {
+  return o.lines.filter((l) => !l.when || picks[l.when.g] === l.when.o)
+}
+
 export function recipeCost(r, ctx, seen = new Set([r.id])) {
   const eat = { sum: 0, missing: [] }
   sumLines(r.ingredients || [], ctx, seen, eat)
+  const picks = usualPicks(r)
   for (const g of r.choices || []) {
-    const usual = g.options.find((o) => o.usual) || g.options[0]
-    if (usual) sumLines(usual.lines, ctx, seen, eat)
+    const usual = g.options.find((o) => o.id === picks[g.id])
+    if (usual) sumLines(optionLines(usual, picks), ctx, seen, eat)
+    // choices with nothing in any of them (Badger Chi's sauces) are not a cost of nought
+    if (g.options.length && !g.options.some((o) => o.lines.length)) eat.missing.push(`${g.name}: no choice has anything in it yet`)
   }
   // nothing in it yet is not a cost of nought
   const lines = (r.ingredients || []).length + (r.choices || []).reduce((a, g) => a + ((g.options.find((o) => o.usual) || g.options[0] || { lines: [] }).lines.length), 0)
