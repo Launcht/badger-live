@@ -178,6 +178,8 @@ function measured(l) {
   if (!l.measure) return null
   const m = S.measures.get(l.measure)
   if (!m) return null
+  // a buy row (17/11/2026): the line already says its amount in the one kitchen unit; nothing to work out or show again
+  if (m.kind) return { show: l.qty, unit: l.unit, flag: m.value ? null : `Say how many ${m.unit}s are in one ${m.pack} under "How we measure things".`, m }
   const p = piecesOf(l, m)
   if (l.unit === 'piece') return { show: l.qty, unit: 'piece', flag: shareOf(m) ? null : `Set what one ${m.unit} is under "How we measure things" at the top.`, m }
   if (!p) return { show: l.qty, unit: l.unit, flag: `Set what one ${m.unit} is under "How we measure things" at the top, and this reads in ${m.unit}s.`, m }
@@ -241,7 +243,7 @@ function otherHtml(r) {
   if (!o) return ''
   const makes = o.makes ? ` <span class="muted">makes ${esc(fmtQty(o.makes.qty, o.makes.unit))}</span>` : ''
   return `<div class="other"><h4>In Odoo: ${esc(o.name)}${makes}</h4>
-    <ul>${o.lines.map((l) => `<li>${esc(fmtQty(l.qty, l.unit))} ${esc(l.name)}</li>`).join('')}</ul>
+    <ul>${o.lines.map((l) => `<li>${esc(l.unit === 'piece' ? `${trimN(l.qty)} ${plur(Number(l.qty), 'slice')}` : fmtQty(l.qty, l.unit))} ${esc(l.name)}</li>`).join('')}</ul>
     ${o.choices && o.choices.length ? `<p class="muted">Choices there: ${o.choices.map(esc).join('; ')}</p>` : ''}
     ${S.canEdit && o.ingredients && o.ingredients.length ? '<button type="button" class="btn ghost" data-act="use-other">Use the Odoo list instead</button>' : ''}</div>`
 }
