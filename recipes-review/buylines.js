@@ -62,6 +62,8 @@ function families(t) {
   if (s.has('yoghurt')) f.yoghurt = ['greek', 'double'].filter((w) => s.has(w))
   if (s.has('chocolate')) f.chocolate = ['milk', 'dark', 'white'].filter((w) => s.has(w))
   if (s.has('salted') || s.has('unsalted')) f.salt = ['salted', 'unsalted'].filter((w) => s.has(w))
+  if (s.has('oil')) f.oil = ['sunflower', 'canola', 'olive', 'coconut'].filter((w) => s.has(w))
+  if (s.has('whipped') || s.has('whipping')) f.whip = ['whipped']
   for (const k of Object.keys(f)) if (!f[k].length) delete f[k]
   f.form = [...new Set(t.map((w) => FORM[w]).filter(Boolean))]
   f.state = [...new Set(t.map((w) => STATE[w]).filter(Boolean))]
@@ -84,9 +86,11 @@ export function guard(product, line) {
     if (a[fam] && b[fam] && differ(a[fam], b[fam])) why.push([b[fam].join(' and '), `${fam}: ${a[fam].join(', ')} vs ${b[fam].join(', ')}`])
   }
   // yoghurt kind, chocolate kind, salted: the line names one ours does not
-  for (const fam of ['yoghurt', 'chocolate', 'salt']) {
+  for (const fam of ['yoghurt', 'chocolate', 'salt', 'oil', 'whip']) {
     const extra = (b[fam] || []).filter((w) => !(a[fam] || []).includes(w))
     if (extra.length && (fam !== 'yoghurt' || extra.includes('greek'))) why.push([extra[0], `${fam}: ${extra[0]} on the line only`])
+    // an oil of another kind (canola under Sunflower Oil)
+    if (fam === 'oil' && a.oil && b.oil && !extra.length && a.oil.some((w) => !b.oil.includes(w)) && b.oil.length) why.push([b.oil[0], `oil: ${a.oil.join(', ')} vs ${b.oil.join(', ')}`])
   }
   // form: both say one and they differ, or a strong form on one side only
   const fa = a.form
@@ -161,6 +165,8 @@ export function readPack(product, line) {
     if (unitKind(m[3]) === k) return done(n * each)
     return ask(`1 of ${n} x ${m[2]} ${UNIT_SAY[m[3]]}`)
   }
+  m = p.match(/^(\d+)\s*x\s*(\d+)$/)
+  if (m && k === 'count') return done(Number(m[1]) * Number(m[2]))
   // a count: pack of 100, tray of 30, 500 cups (printed ZIBO-500), 60 eggs
   m = p.match(/\b(?:pack|tray|box|sleeve|case|bag|carton)\s+of\s+(\d+)/) || p.match(/^(\d+)\s+(?:cups?|lids?|eggs?|bags?|pieces?|portions?|straws?|serviettes?)\b/)
   if (m) {
@@ -307,6 +313,8 @@ export function choiceOnly(r, keyOf, nameOfKey) {
 // ---------------------------------------------------------------- menu extras (spec 2.8)
 
 const DRINK_CATS = new Set(['Hot Drinks', 'Cold Drinks'])
+/** Tarryn, 19/11: "if a cold drink or milk shake / juice is sold it goes with a straw". A rule, not a hand list. */
+export const getsStraw = (r) => r.category === 'Cold Drinks' || /milk\s?shake|smoothie|frappe|freezo|juice|iced/i.test(r.name || '')
 /**
  * Menu extras for one sold item, pre-filled from its take-away ticks: each tick becomes its product(s) (a split row like
  * Milkshake Cup and Lid becomes both), Straw 12mm on eat in for every item whose take-away carries a straw, and the
@@ -322,7 +330,9 @@ export function extrasFromTakeaway(r, keysOf, { straw = 'm-straws-12mm', serviet
     for (const p of keys) if (!seen.has(p)) { seen.add(p); takeaway.push({ p, qty: l.qty ?? 1, sug: true }) }
   }
   if (serviette && !DRINK_CATS.has(r.category) && !seen.has(serviette)) takeaway.push({ p: serviette, qty: 1, sug: true })
-  const eatin = seen.has(straw) ? [{ p: straw, qty: 1, sug: true }] : []
+  const wantStraw = getsStraw(r)
+  if (wantStraw && !seen.has(straw)) { seen.add(straw); takeaway.push({ p: straw, qty: 1, sug: true }) }
+  const eatin = wantStraw || seen.has(straw) ? [{ p: straw, qty: 1, sug: true }] : []
   return { eatin, takeaway }
 }
 
@@ -393,6 +403,7 @@ export function validateProduct(field, v) {
     return ok(v || '')
   }
   if (field === 'answer') {
+    if (v === '') return ok('') // Undo of a settled answer: the question comes back
     if (typeof v !== 'string' || !v.trim()) return no('Pick an answer.')
     if (v.length > 300) return no('Keep it under 300 letters.')
     return ok(v.trim())
@@ -445,6 +456,31 @@ export function validateExtras(v) {
 }
 
 // ---------------------------------------------------------------- Sue's amounts (19/11)
+
+const WORDS = { cup: 'cup', cups: 'cup', tsp: 'tsp', tspn: 'tsp', tspns: 'tsp', teaspoon: 'tsp', teaspoons: 'tsp', tbs: 'tbsp', tbsp: 'tbsp', tbsn: 'tbsp', tablespoon: 'tbsp', tablespoons: 'tbsp',
+  bulb: 'bulb', bulbs: 'bulb', clove: 'clove', cloves: 'clove', punnet: 'punnet', punnets: 'punnet', handful: 'handful', bunch: 'bunch', scoop: 'scoop', scoops: 'scoop',
+  squeeze: 'squeeze', squeezes: 'squeeze', pkt: 'packet', packet: 'packet', tin: 'tin', tins: 'tin', pinch: 'pinch', large: 'each', medium: 'each', slices: 'slice', slice: 'slice', litre: 'litre' }
+/**
+ * Sue's amount as a number and a measure word, so one question per product and measure can answer every line:
+ * "1½ tsp (10g)" -> { n: 1.5, word: 'tsp' }; "2" -> { n: 2, word: 'each' }; "26cm" -> { n: 1, word: 'size' };
+ * "half cup" -> { n: 0.5, word: 'cup' }; "to taste" -> null.
+ */
+export function measureOf(text) {
+  const raw = String(text || '').trim()
+  if (!raw) return null
+  if (/^\d+\s*cm$/i.test(raw)) return { n: 1, word: 'size' }
+  let t = raw.toLowerCase().replace(/(\d)\s*([½¼¾⅓])/g, (m, d, f) => String(Number(d) + FRAC[f])).replace(/[½¼¾⅓]/g, (f) => String(FRAC[f]))
+    .replace(/^half\b/, '0.5').replace(/^a\b/, '1')
+    .replace(/^(\d+)\s*(?:&|and)\s*(\d+)\/(\d+)/, (m, d, x, y) => String(Number(d) + Number(x) / Number(y)))
+    .replace(/^(\d+)\/(\d+)/, (m, x, y) => String(Number(x) / Number(y)))
+  t = t.replace(/\(.*$/, '').trim()
+  const m = t.match(/^(\d+(?:[.,]\d+)?|\.\d+)?\s*(?:x\s*\d+\s*)?([a-z]+)?/)
+  if (!m) return null
+  const n = m[1] ? Number(m[1].replace(',', '.')) : 1
+  const w = m[2] ? WORDS[m[2]] || (/^(g|gr|kg|ml|l|lt)$/.test(m[2]) ? m[2] : null) : 'each'
+  if (!w || !Number.isFinite(n)) return null
+  return { n, word: w }
+}
 
 const FRAC = { '½': 0.5, '¼': 0.25, '¾': 0.75, '⅓': 1 / 3 }
 

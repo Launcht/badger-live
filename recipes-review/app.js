@@ -5,7 +5,7 @@
  * is in the link after # (never sent to a web server's log), and goes in the request body.
  */
 import { recipeCost, lineCost, fmtQty, fmtRand, progress, UNIT_WORDS, MAKES_UNITS } from './recipereview.js'
-import { guard, readPack, figureWords, plural as plu, resolveKey, normName, crossKind, unitCost, sueAmount, readNumber } from './buylines.js'
+import { guard, readPack, figureWords, plural as plu, resolveKey, normName, crossKind, unitCost, sueAmount, readNumber, measureOf } from './buylines.js'
 
 const API = 'https://nptyrtjdvqglgwkaepce.supabase.co/functions/v1/badger-recipes'
 const key = new URLSearchParams(location.hash.slice(1)).get('k') || new URLSearchParams(location.search).get('k') || ''
@@ -18,7 +18,8 @@ const S = {
   questions: [], aliases: new Map(), canEdit: false, who: '', show: 'all',
 }
 const $ = (s, el = document) => el.querySelector(s)
-const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+// Sue's documents hold long dashes ("1/2 tsp - 2g"); shown as a plain hyphen, the data keeps her words
+const esc = (s) => String(s ?? '').replace(/[\u2013\u2014]/g, '-').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
 const SEP = '<span class="dot" aria-hidden="true">/</span>'
 const X = '&times;'
 let seq = 0
@@ -283,15 +284,15 @@ function rowSuggestion(p, kept) {
   if (!o) return ''
   return `<div class="row-sug">Your invoice says ${trimN(o.figure)} in a ${esc(p.pack)}. ${S.canEdit ? `<button type="button" class="linkish" data-act="use-pack" data-n="${o.figure}">Use ${trimN(o.figure)}?</button>` : ''}</div>`
 }
-function askHtml(kept, where = 'card') {
+function askHtml(kept, where = 'card', keys = [kept]) {
   const p = prod(kept)
   if (!p || !p.ask) return ''
   const a = p.ask
-  if (p.answer) return `<div class="ask done">${esc(a.q)} <b>${esc(p.answer)}</b>${S.canEdit ? ' <button type="button" class="linkish" data-act="re-ask">Change</button>' : ''}</div>`
+  if (p.answer) return `<div class="ask done">${esc(a.q)} <b>${esc(p.answer)}</b>${/^Settled: /.test(p.answered_by || '') ? ` <small class="muted">${esc(p.answered_by)}</small>` : ''}${S.canEdit ? ' <button type="button" class="linkish" data-act="re-ask">Change</button>' : ''}</div>`
   const opts = a.options.length
     ? a.options.map((o) => `<button type="button" class="opt-b${o.label === a.pick ? ' pick' : ''}" data-act="answer" data-a="${esc(o.label)}"${o.join ? ` data-join="${esc(o.join)}"` : ''}${ro()}>${esc(o.label)}${o.label === a.pick ? ' <small>my guess</small>' : ''}</button>`).join('')
     : `<input class="ask-text" type="text" maxlength="300" placeholder="Type your answer" aria-label="${esc(a.q)}"${ro()}>`
-  return `<div class="ask" data-key="${esc(kept)}" data-where="${where}"><p>${esc(a.q)}</p><div class="opts">${opts}</div></div>`
+  return `<div class="ask" data-key="${esc(kept)}" data-keys="${esc(keys.join(' '))}" data-where="${where}"><p>${esc(a.q)}</p><div class="opts">${opts}</div></div>`
 }
 function buyHtml(kept) {
   const p = prod(kept)
@@ -368,6 +369,11 @@ function lineRow(l, path, r) {
   if (v.kind === 'none') flags.push(l.ask ? l.ask : 'Pick a product or remove this line.')
   else if (l.ask && l.qty == null) flags.push(l.ask)
   if (v.cross) flags.push(`${v.cross.ask}. Please confirm.`)
+  if (v.kind === 'batch' && l.qty != null) {
+    const b = S.byId.get(l.batch)
+    const bk = b && b.makes ? ({ kg: 'g', L: 'ml' }[b.makes.unit] || b.makes.unit) : null
+    if ((bk === 'g' || bk === 'ml') && (l.unit === 'g' || l.unit === 'ml') && l.unit !== bk) flags.push(`Written in ${l.unit}; the batch is made in ${bk}. Please give it in ${bk}.`)
+  }
   const sueWas = l.was && (r && r.sue) ? `<div class="was">Sue wrote: ${esc(l.was)}${l.part ? ` (${esc(l.part)})` : ''}</div>` : ''
   const buy = v.kind === 'product' && v.p.role === 'stock'
     ? `<details class="l-buy" data-key="${esc(v.key)}"><summary><span class="lb-sum">${tickedSummary(v.key)}</span><span class="lb-go">Where we buy it</span></summary><div class="lb-body"></div></details>`
@@ -380,6 +386,7 @@ function lineRow(l, path, r) {
     ${S.canEdit ? `<button type="button" class="x" data-act="del-line" aria-label="Remove">${X}</button>` : ''}
     ${flags.map((f) => `<div class="flag gold-t">${esc(f)}</div>`).join('')}
     ${sueWas}
+    ${l.set ? `<div class="was settled-l">Settled: ${esc(l.set.why)}${S.canEdit ? ' <button type="button" class="linkish" data-act="line-unsettle">Undo</button>' : ''}</div>` : ''}
     ${r && path.startsWith('choices.') ? whenSelect(r, l, path) : ''}
     ${buy}
   </div>`
@@ -489,25 +496,78 @@ function cardHtml(r) {
 
 // ---------------------------------------------------------------- What I need from you (counted once)
 
+// What we ask, folded (test B2, 19/11): one question per product and measure, however many recipes; two short lists,
+// "For you, Lindsay" (what she buys) and "For Sue (kitchen)" (her recipes and method), each ordered by how many recipes
+// an answer unblocks. What we settled from evidence is listed apart, with its source and an Undo.
+const active = (r) => !r.left_out && r.needed !== false
 function needs() {
-  const kept = [...S.measures.values()].filter((m) => !m.same_as)
-  const questions = kept.filter((m) => m.ask && !m.answer && usedOrBought(m.key))
-  const gold = []
-  for (const m of kept) for (const o of offersFor(m.key)) if (goldOf(o)) gold.push([m, o])
-  const amounts = []
-  const blanks = []
-  for (const r of S.recipes) {
-    if (r.left_out || r.needed === false) continue
+  const lindsay = []
+  const sue = []
+  const recipesOf = (pred) => S.recipes.filter((r) => active(r) && allLines(r).some(([, l]) => pred(l)))
+  // products: her questions, on products a live recipe uses or she buys
+  for (const m of [...S.measures.values()].filter((x) => !x.same_as)) {
+    const ask = m.ask && !m.answer
+    const golds = offersFor(m.key).filter(goldOf)
+    if (!ask && !golds.length) continue
+    const rs = recipesOf((l) => keyOfLine(l) === m.key)
+    if (ask && !golds.length && !rs.length && !offersFor(m.key).length && m.grp !== 'Packaging') continue
+    const same = ask && !golds.length && lindsay.find((x) => x.kind === 'product' && x.ask && !x.golds.length && prod(x.key).ask.q === m.ask.q)
+    if (same) { same.keys.push(m.key); same.title = `${same.title}, ${m.name}`; for (const r of rs) same.rset.add(r.id); same.n = same.rset.size; continue }
+    lindsay.push({ kind: 'product', key: m.key, keys: [m.key], ask, golds, n: rs.length, rset: new Set(rs.map((r) => r.id)), title: m.name })
+  }
+  // names Sue wrote that we could not place: Lindsay's when it is something she buys, Sue's when it is made here
+  for (const q of S.questions.filter((x) => /^Ingredients to name/.test(x.grp) && !x.answer)) {
+    const rs = recipesOf((l) => !l.measure && !l.batch && l.name === q.name)
+    if (!rs.length) continue
+    ;(/Sue/.test(q.grp) ? sue : lindsay).push({ kind: 'name', q, n: rs.length, title: q.name, recipes: rs })
+  }
+  // amounts: one question per product (or batch) and measure
+  const groups = new Map()
+  for (const r of S.recipes.filter(active)) {
     for (const [path, l] of allLines(r)) {
       const v = lineView(l)
-      if (v.kind === 'none' && !(l.ask && /Which product/.test(l.ask))) blanks.push([r, path, l])
-      else if (v.kind !== 'none' && l.qty == null && l.ask) amounts.push([r, path, l])
-      else if (v.cross) amounts.push([r, path, l])
+      if (v.kind === 'none') continue
+      if (v.cross) { lindsay.push({ kind: 'cross', r, path, l, n: 1, title: v.name }); continue }
+      if (l.qty != null || !l.ask) continue
+      const m = measureOf(l.was)
+      const target = v.kind === 'batch' ? `b:${l.batch}` : v.key
+      const gk = `${target}|${m ? m.word : `text:${l.was || ''}`}`
+      if (!groups.has(gk)) groups.set(gk, { kind: 'amount', target, word: m ? m.word : null, text: l.was || '', v, lines: [], recipes: new Set(), title: v.name })
+      const g = groups.get(gk)
+      g.lines.push([r, path, l, m])
+      g.recipes.add(r.id)
     }
   }
-  const named = S.questions.filter((q) => q.grp === 'Ingredients to name' && !q.answer)
-  const sue = S.questions.filter((q) => q.grp !== 'Ingredients to name' && !q.answer)
-  return { questions, gold, amounts, blanks, named, sue, total: questions.length + gold.length + amounts.length + blanks.length + named.length + sue.length }
+  const cards = new Map()
+  for (const g of groups.values()) {
+    if (!cards.has(g.target)) cards.set(g.target, { kind: 'amounts', target: g.target, v: g.v, title: g.title, groups: [], recipes: new Set() })
+    const c = cards.get(g.target)
+    c.groups.push(g)
+    for (const r of g.recipes) c.recipes.add(r)
+  }
+  for (const c of cards.values()) { c.n = c.recipes.size; sue.push(c) }
+  for (const q of S.questions.filter((x) => !/^Ingredients to name/.test(x.grp) && !x.answer)) {
+    const r = q.about && S.byId.get(q.about)
+    if (r && !active(r)) continue
+    sue.push({ kind: 'note', q, n: 1, title: q.text })
+  }
+  for (const r of S.recipes.filter(active)) for (const [, l] of allLines(r)) if (lineView(l).kind === 'none' && !(l.ask && /Which product/.test(l.ask))) lindsay.push({ kind: 'blank', r, l, n: 1, title: r.name })
+  const order = (a, b) => b.n - a.n || String(a.title).localeCompare(String(b.title))
+  lindsay.sort(order)
+  sue.sort(order)
+  // settled by us: grouped by why, once
+  const settled = new Map()
+  for (const r of S.recipes.filter(active)) {
+    for (const [path, l] of allLines(r)) {
+      if (!l.set) continue
+      if (!settled.has(l.set.why)) settled.set(l.set.why, { why: l.set.why, lines: [], recipes: new Set() })
+      const s = settled.get(l.set.why)
+      s.lines.push([r, path, l])
+      s.recipes.add(r.name)
+    }
+  }
+  for (const m of S.measures.values()) if (m.answer && /^Settled: /.test(m.answered_by || '')) settled.set(`p:${m.key}`, { why: `${m.name}: ${m.answer}. ${m.answered_by.slice(9)}`, product: m.key, lines: [], recipes: new Set() })
+  return { lindsay, sue, settled: [...settled.values()], total: lindsay.length + sue.length }
 }
 function usedOrBought(k) {
   if (offersFor(k).length) return true
@@ -516,30 +576,60 @@ function usedOrBought(k) {
 function allLines(r) {
   return [...r.ingredients.map((l) => ['ingredients', l]), ...r.choices.flatMap((g, gi) => g.options.flatMap((o, oi) => o.lines.map((l) => [`choices.${gi}.${oi}`, l])))]
 }
+const applies = (n) => (n > 1 ? `<small class="nd-n">applies to ${n} recipes</small>` : n === 1 ? '<small class="nd-n">1 recipe</small>' : '')
+function needItem(x, i) {
+  if (x.kind === 'product') return `<div class="nd-q"><b>${esc(x.title)}</b> ${applies(x.n)}${x.ask ? askHtml(x.key, 'needs', x.keys) : ''}${x.golds.length ? `<div class="wb" data-key="${esc(x.key)}"><p class="small">How much is in one? Weigh one, or type what you know.</p>${x.golds.map((o) => offerHtml(x.key, o)).join('')}</div>` : ''}</div>`
+  if (x.kind === 'amounts') return `<div class="nd-q nd-am"><b>${esc(x.title)}</b> ${applies(x.n)}${x.groups.map((g, j) => amountRow(g, `${i}.${j}`)).join('')}</div>`
+  if (x.kind === 'name') return `<div class="nd-q" data-q="${esc(x.q.key)}"><p>Sue wrote <b>"${esc(x.q.name)}"</b>. Which product is it? ${applies(x.n)}</p>${S.canEdit ? '<button type="button" class="btn ghost small" data-act="name-pick">Pick a product</button>' : ''}</div>`
+  if (x.kind === 'note') return `<div class="nd-q" data-q="${esc(x.q.key)}"><p>${esc(x.q.text)}</p><textarea class="q-ans" rows="2" maxlength="1000" placeholder="Answer"${ro()}></textarea></div>`
+  if (x.kind === 'blank') return `<p class="nd-q"><a href="#r-${esc(x.r.id)}" data-open="${esc(x.r.id)}">${esc(x.r.name)}</a>: "${esc(x.l.name)}". Pick a product or remove this line.</p>`
+  if (x.kind === 'cross') return `<div class="nd-q"><a href="#r-${esc(x.r.id)}" data-open="${esc(x.r.id)}">${esc(x.r.name)}</a>: ${esc(lineView(x.l).cross.ask)}</div>`
+  return ''
+}
+function amountRow(x, i) {
+  // an amount: one box answers every line with this measure
+  const unit = x.target.startsWith('b:') ? (x.lines[0][2].unit === 'ml' ? 'ml' : 'g') : x.v.p.kind === 'count' ? plu(x.v.p.unit) : x.v.p.kind
+  const ask = x.word && !['each', 'size'].includes(x.word) ? `How many ${unit} is 1 ${x.word}?` : x.word === 'each' ? `How many ${unit} is one?` : `Sue wrote "${x.text || 'no amount'}". How many ${unit}?`
+  const eg = [...new Set(x.lines.map(([, , l]) => l.was || 'no amount'))].slice(0, 3).join('; ')
+  return `<div class="nd-a" data-g="${i}"><span>${esc(ask)} <small class="muted">(Sue wrote ${esc(eg)})</small></span><span class="row"><input class="nd-qty" type="text" inputmode="decimal" aria-label="${esc(x.title)}: ${esc(ask)}"${ro()}><span>${esc(unit)}</span></span></div>`
+}
+let NEEDS = null
 function renderNeeds() {
   const n = needs()
-  const byShelf = new Map()
-  for (const m of n.questions) { const g = m.grp || 'Other'; byShelf.set(g, [...(byShelf.get(g) || []), m]) }
-  const bySup = new Map()
-  for (const [m, o] of n.gold) { const s = lineOf(o).supplier; bySup.set(s, [...(bySup.get(s) || []), [m, o]]) }
-  const byRecipe = new Map()
-  for (const x of n.amounts) byRecipe.set(x[0], [...(byRecipe.get(x[0]) || []), x])
-  const sect = (title, count, inner, open = false) => (count ? `<details class="nd"${open ? ' open' : ''}><summary>${esc(title)}</summary>${inner}</details>` : '')
-  const shelves = [...byShelf].sort((a, b) => SHELVES.indexOf(a[0]) - SHELVES.indexOf(b[0]))
+  NEEDS = n
+  const list = (items, who) => items.map((x, i) => needItem(x, `${who}${i}`)).join('')
   $('#needs').innerHTML = `<h2>What I need from you <span class="n">${n.total}</span></h2>
-    <p class="small">Under each ingredient I have ticked where I think you buy it. Untick anything wrong, tick anything I missed. Where it says Please confirm, tell me how much is in one (weigh it if you need to). Each question is here once, however many recipes use it.</p>
+    <p class="small">Under each ingredient I have ticked where I think you buy it. Untick anything wrong. Each question is asked once, however many recipes it is in; the ones at the top unblock the most recipes.</p>
     ${n.total ? '' : '<p class="done-all">Nothing left. Thank you.</p>'}
-    ${sect(`Products: ${n.questions.length}`, n.questions.length, shelves.map(([g, list]) => `<div class="nd-g"><h4>${esc(g)}: ${list.length}</h4>${list.map((m) => `<div class="nd-q"><b>${esc(m.name)}</b>${askHtml(m.key, 'needs')}</div>`).join('')}</div>`).join(''), true)}
-    ${sect(`How much is in one: ${n.gold.length}`, n.gold.length, [...bySup].map(([s, list]) => `<div class="nd-g"><h4>${esc(s)}: ${list.length} to confirm</h4>${list.map(([m, o]) => `<div class="nd-q"><b>${esc(m.name)}</b><div class="wb" data-key="${esc(m.key)}">${offerHtml(m.key, o)}</div></div>`).join('')}</div>`).join(''))}
-    ${sect(`Ingredients to name, from Sue's recipes: ${n.named.length}`, n.named.length, n.named.map((q) => `<div class="nd-q" data-q="${esc(q.key)}"><p>${esc(q.text)}</p>${S.canEdit ? '<button type="button" class="btn ghost small" data-act="name-pick">Pick a product</button>' : ''}</div>`).join(''))}
-    ${sect(`Amounts to confirm, from Sue's recipes: ${n.amounts.length}`, n.amounts.length, [...byRecipe].map(([r, list]) => `<div class="nd-g"><h4><a href="#r-${esc(r.id)}" data-open="${esc(r.id)}">${esc(r.name)}</a>: ${list.length}</h4>${list.map(([, path, l]) => {
-      const v = lineView(l)
-      return `<div class="nd-a" data-r="${esc(r.id)}" data-path="${esc(path)}" data-id="${esc(l.id)}"><span>${esc(v.name)}: ${esc(v.cross ? v.cross.ask : l.ask)}</span><span class="row"><input class="nd-qty" type="text" inputmode="decimal" aria-label="Amount of ${esc(v.name)}"${ro()}><span>${esc(v.kind === 'batch' ? l.unit : v.p.kind === 'count' ? plu(v.p.unit) : v.p.kind)}</span></span></div>`
-    }).join('')}</div>`).join(''))}
-    ${sect(`From Sue's notes: ${n.sue.length}`, n.sue.length, n.sue.map((q) => `<div class="nd-q" data-q="${esc(q.key)}"><p>${esc(q.text)}</p><textarea class="q-ans" rows="2" maxlength="1000" placeholder="Your answer"${ro()}></textarea></div>`).join(''))}
-    ${sect(`Recipe lines to finish: ${n.blanks.length}`, n.blanks.length, n.blanks.map(([r, , l]) => `<p class="nd-q"><a href="#r-${esc(r.id)}" data-open="${esc(r.id)}">${esc(r.name)}</a>: "${esc(l.name)}". Pick a product or remove this line.</p>`).join(''))}`
+    ${n.lindsay.length ? `<details class="nd" open><summary>For you, Lindsay: ${n.lindsay.length}</summary><p class="small">What you buy and how you use it.</p>${list(n.lindsay, 'L')}</details>` : ''}
+    ${n.sue.length ? `<details class="nd"><summary>For Sue (kitchen): ${n.sue.length}</summary><p class="small">Sue's recipes and how she measures. These can go to Sue as one list.</p>${list(n.sue, 'S')}</details>` : ''}
+    ${n.settled.length ? `<details class="nd settled"><summary>Settled by us, not asked: ${n.settled.length}</summary><p class="small">From what we already hold. Tap Undo if one is wrong and it comes back as a question.</p>${n.settled.map((s, i) => `<div class="nd-s" data-s="${i}"><span>${esc(s.why)} <small class="nd-n">${esc([...s.recipes].slice(0, 4).join(', '))}${s.recipes.size > 4 ? ` and ${s.recipes.size - 4} more` : ''}</small></span>${S.canEdit ? '<button type="button" class="linkish" data-act="unsettle">Undo</button>' : ''}</div>`).join('')}</details>` : ''}`
   const chip = $('#needChip')
-  if (chip) chip.textContent = `Only what needs me (${n.total})`
+  if (chip) chip.textContent = `What I need (${n.total})`
+}
+/** One answer for a folded amount: every line in the group gets its number; the line says it was her answer. */
+function answerGroup(g, value) {
+  const touched = new Set()
+  for (const [r, path, l, m] of g.lines) {
+    l.qty = Number(((m ? (m.word === 'size' ? 1 : m.n) : 1) * value).toPrecision(6))
+    l.set = { why: `Your answer: ${g.word && !['each', 'size'].includes(g.word) ? `1 ${g.word}` : g.word === 'each' ? 'one' : `"${g.text}"`} of ${g.title} = ${trimN(value)}`, undo: { qty: null, ask: l.ask } }
+    delete l.ask
+    touched.add(`${r.id}|${fieldOf(path)}`)
+  }
+  for (const k of touched) { const [rid, f] = k.split('|'); save(rid, f, S.byId.get(rid)[f]) }
+}
+function unsettle(s) {
+  const touched = new Set()
+  for (const [r, path, l] of s.lines) {
+    const u = l.set.undo || {}
+    for (const k of ['name', 'measure', 'batch', 'qty', 'ask']) if (k in u) { if (u[k] == null) delete l[k]; else l[k] = u[k] }
+    if (!('qty' in u) && !l.measure && !l.batch) l.qty = null
+    if ('name' in u && !l.measure && !l.batch && !l.ask) l.ask = `Which product is "${l.name}"? Sue wrote "${l.was || 'no amount'}"`
+    if (l.qty == null && !l.ask) l.ask = `Sue wrote "${l.was || 'no amount'}"`
+    delete l.set
+    touched.add(`${r.id}|${fieldOf(path)}`)
+  }
+  for (const k of touched) { const [rid, f] = k.split('|'); save(rid, f, S.byId.get(rid)[f]) }
 }
 
 // ---------------------------------------------------------------- the product list ("How we measure things")
@@ -868,10 +958,13 @@ function onBuyClick(b) {
     const k = box ? box.dataset.key : b.closest('.wb').dataset.key
     const m = prod(k)
     if (a === 're-ask') { m.answer = null; redrawAll(); return true }
-    m.answer = b.dataset.a
     const join = b.dataset.join || null
-    if (join) m.same_as = join
-    act(`prod:${k}:answer`, { action: 'product', product: k, field: 'answer', value: { answer: m.answer, join } })
+    for (const kk of (box && box.dataset.keys ? box.dataset.keys.split(' ') : [k])) {
+      const mm = prod(kk)
+      mm.answer = b.dataset.a
+      if (join && kk !== join) mm.same_as = join
+      act(`prod:${kk}:answer`, { action: 'product', product: kk, field: 'answer', value: { answer: mm.answer, join: kk !== join ? join : null } })
+    }
     redrawAll()
     return true
   }
@@ -915,6 +1008,22 @@ function wire() {
     if (!b || !S.canEdit) return
     if (b.closest('.wb, .ask') && onBuyClick(b)) return
     if (b.dataset.act === 'name-pick') { openPicker({ question: b.closest('[data-q]').dataset.q }); return }
+    if (b.dataset.act === 'unsettle') {
+      const s = NEEDS.settled[Number(b.closest('.nd-s').dataset.s)]
+      if (!s || !confirm('Put this back as a question?')) return
+      if (s.product) { const m = prod(s.product); m.answer = null; m.answered_by = null; act(`prod:${s.product}:answer`, { action: 'product', product: s.product, field: 'answer', value: { answer: '', join: null } }) } else unsettle(s)
+      redrawAll()
+      return
+    }
+    if (b.dataset.act === 'line-unsettle') {
+      const card = b.closest('.card')
+      const r = S.byId.get(card.dataset.id)
+      const lineEl = b.closest('.line')
+      const l = at(r, lineEl.dataset.path).find((x) => x.id === lineEl.dataset.id)
+      unsettle({ lines: [[r, lineEl.dataset.path, l]] })
+      redrawAll()
+      return
+    }
     const holder = b.closest('.card, .lo')
     const r = holder && S.byId.get(holder.dataset.id)
     const actName = b.dataset.act
@@ -1030,6 +1139,7 @@ function wire() {
       const { o } = findOffer(t)
       const raw = t.value.trim()
       const f = readNumber(raw)
+      if (raw === '' && o.figure == null) { good(t); return }
       if (raw === '') { good(t); if (final) { o.figure = null; o.figure_how = null; act(`offer:${o.line}:${o.key}:fig`, { action: 'offer', line: o.line, product: o.key, value: { figure: null } }); redrawAll() } return }
       if (!(Number.isFinite(f) && f > 0 && f <= 1000000)) { bad(t, 'how much is in one must be a number above nought, like 1000.'); return }
       good(t)
@@ -1078,20 +1188,17 @@ function wire() {
       return
     }
     if (t.classList.contains('nd-qty')) {
-      const box = t.closest('.nd-a')
-      const r = S.byId.get(box.dataset.r)
-      const l = at(r, box.dataset.path).find((x) => x.id === box.dataset.id)
-      const raw = t.value.trim().replace(',', '.')
-      const q = Number(raw)
-      if (raw === '') return
+      const id = t.closest('.nd-a').dataset.g
+      const [ci, gi] = id.slice(1).split('.').map(Number)
+      const card = NEEDS && (id[0] === 'L' ? NEEDS.lindsay : NEEDS.sue)[ci]
+      const g = card && card.groups ? card.groups[gi] : null
+      const raw = t.value.trim()
+      const q = readNumber(raw)
+      if (raw === '' || !g) return
       if (!(Number.isFinite(q) && q > 0)) { bad(t, 'the amount must be a number above nought.'); return }
       good(t)
       if (!final) return
-      const v = lineView(l)
-      if (v.cross) { l.was = l.was || v.cross.was; l.measure = v.key; l.unit = v.p.kind === 'count' ? 'each' : v.p.kind }
-      l.qty = q
-      delete l.ask
-      save(r.id, fieldOf(box.dataset.path), r[fieldOf(box.dataset.path)])
+      answerGroup(g, q)
       redrawAll()
       return
     }

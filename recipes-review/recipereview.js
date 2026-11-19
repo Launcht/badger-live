@@ -97,6 +97,15 @@ function cleanLine(l) {
   // not be put in our unit with certainty ("Sue wrote 2 punnets")
   if (l.part != null && l.part !== '') out.part = String(l.part).slice(0, 60)
   if (l.ask != null && l.ask !== '') out.ask = String(l.ask).slice(0, LIMIT.lineText)
+  // settled by us from evidence held (test B2, 19/11): why, and what undo puts back
+  if (l.set != null) {
+    if (typeof l.set !== 'object' || typeof l.set.why !== 'string') return no(`${name.value}: that could not be read.`)
+    const u = l.set.undo && typeof l.set.undo === 'object' ? l.set.undo : {}
+    const undo = {}
+    for (const k of ['name', 'measure', 'batch', 'ask']) if (k in u) undo[k] = u[k] == null ? null : String(u[k]).slice(0, LIMIT.lineText)
+    if ('qty' in u) undo.qty = u.qty == null ? null : Number(u.qty)
+    out.set = { why: l.set.why.slice(0, LIMIT.lineText), undo }
+  }
   if (l.sug != null) {
     if (typeof l.sug !== 'object' || typeof l.sug.was !== 'string') return no(`${name.value}: its suggestion could not be read.`)
     out.sug = { was: l.sug.was.slice(0, LIMIT.lineText) }
