@@ -625,7 +625,7 @@ function redrawAll() {
   costMeasures = measuresForCost()
   for (const r of S.recipes) {
     const body = document.getElementById(`body-${r.id}`)
-    if (body && body.innerHTML) body.innerHTML = bodyHtml(r)
+    if (body && body.innerHTML) redrawBody(body, bodyHtml(r))
   }
   const openKeys = [...document.querySelectorAll('#measures details.b-group[open]')].map((d) => d.querySelector('summary').firstChild.textContent.trim())
   const openBuy = [...document.querySelectorAll('#measures .l-buy[open]')].map((d) => d.dataset.key)
@@ -646,9 +646,30 @@ function at(r, path) {
   return r.choices[+gi].options[+oi].lines
 }
 const fieldOf = (path) => path.split('.')[0]
+// A redraw keeps every open fold-out open (a tick must not close the list she is working in)
+function detailsKey(d) {
+  const line = d.closest('.line')
+  const wb = d.closest('.wb')
+  return `${d.className}|${line ? `${line.dataset.path}/${line.dataset.id}` : ''}|${d.dataset.key || ''}|${wb && !d.classList.contains('l-buy') ? wb.dataset.key : ''}`
+}
+function redrawBody(body, html) {
+  const open = new Set([...body.querySelectorAll('details')].filter((d) => d.open).map(detailsKey))
+  const active = document.activeElement && body.contains(document.activeElement) ? document.activeElement : null
+  const focusKey = active ? `${active.className}|${(active.closest('.of') || {}).dataset?.line || ''}|${(active.closest('.wb') || {}).dataset?.key || ''}` : null
+  body.innerHTML = html
+  // open the outer ones first (filling a "Where we buy it" adds its own details), then the inner ones
+  for (let pass = 0; pass < 2; pass++) {
+    for (const d of body.querySelectorAll('details')) {
+      if (d.open || !open.has(detailsKey(d))) continue
+      if (d.classList.contains('l-buy')) d.querySelector('.lb-body').innerHTML = buyHtml(d.dataset.key)
+      d.open = true
+    }
+  }
+  if (focusKey) for (const el of body.querySelectorAll('input, textarea')) if (`${el.className}|${(el.closest('.of') || {}).dataset?.line || ''}|${(el.closest('.wb') || {}).dataset?.key || ''}` === focusKey) { el.focus(); break }
+}
 function rerenderBody(r) {
   const body = document.getElementById(`body-${r.id}`)
-  if (body) body.innerHTML = bodyHtml(r)
+  if (body) redrawBody(body, bodyHtml(r))
   const card = document.getElementById(`r-${r.id}`)
   if (card) {
     card.querySelector('details').open = true
@@ -875,13 +896,15 @@ function wire() {
   const main = $('#main')
   main.addEventListener('toggle', (e) => {
     const d = e.target
-    if (!(d instanceof HTMLDetailsElement) || !d.open) return
+    if (!(d instanceof HTMLDetailsElement)) return
+    if (!d.open) { if (d.classList.contains('l-buy')) d.querySelector('.lb-body').innerHTML = ''; return }
     if (d.classList.contains('more')) {
       const r = S.byId.get(d.closest('.card').dataset.id)
       const body = d.querySelector('.body')
       if (r && !body.innerHTML) body.innerHTML = bodyHtml(r)
     } else if (d.classList.contains('l-buy')) {
-      d.querySelector('.lb-body').innerHTML = buyHtml(d.dataset.key)
+      const lb = d.querySelector('.lb-body')
+      if (!lb.innerHTML) lb.innerHTML = buyHtml(d.dataset.key)
     }
   }, true)
 
@@ -943,7 +966,7 @@ function wire() {
       save(r.id, 'ingredients', r.ingredients)
       save(r.id, 'choices', r.choices)
       save(r.id, 'moved', r.moved)
-      rerenderBody(r)
+      redrawAll()
       return
     }
     if (actName === 'extra' || actName === 'extra-drop') {
@@ -1007,7 +1030,7 @@ function wire() {
       const { o } = findOffer(t)
       const raw = t.value.trim()
       const f = readNumber(raw)
-      if (raw === '') { good(t); if (final) { o.figure = null; o.figure_how = null; act(`offer:${o.line}:${o.key}:fig`, { action: 'offer', line: o.line, product: o.key, value: { figure: null } }) } return }
+      if (raw === '') { good(t); if (final) { o.figure = null; o.figure_how = null; act(`offer:${o.line}:${o.key}:fig`, { action: 'offer', line: o.line, product: o.key, value: { figure: null } }); redrawAll() } return }
       if (!(Number.isFinite(f) && f > 0 && f <= 1000000)) { bad(t, 'how much is in one must be a number above nought, like 1000.'); return }
       good(t)
       o.figure = f
@@ -1042,6 +1065,8 @@ function wire() {
       return
     }
     if (t.classList.contains('al-q')) {
+      // on typing only: redrawing on blur would swap the Add button out from under the tap
+      if (final) return
       t.parentElement.querySelector('.al-res').innerHTML = addLineResults(t.closest('.wb').dataset.key, t.value)
       return
     }
@@ -1287,6 +1312,7 @@ async function start() {
   S.questions = d.questions || []
   S.aliases = new Map()
   for (const m of S.measures.values()) for (const n of [m.name, ...(m.was || [])]) if (!S.aliases.has(normName(n))) S.aliases.set(normName(n), m.key)
+  for (const [n, k] of Object.entries(d.aliases || {})) if (!S.aliases.has(n) && S.measures.has(k)) S.aliases.set(n, k)
   $('#anythingElse').value = d.notes || ''
   if (!S.canEdit) {
     document.body.classList.add('view')

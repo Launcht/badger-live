@@ -387,7 +387,7 @@ export async function handle(req, store) {
   if (req.action === 'open') {
     const all = await store.list()
     const body = { who: me.who, canEdit: me.edit, recipes: all.recipes, notes: all.notes, items: all.items, measures: all.measures || [], packaging: all.packaging || [],
-      lines: all.lines || [], offers: all.offers || [], questions: all.questions || [] }
+      lines: all.lines || [], offers: all.offers || [], questions: all.questions || [], aliases: all.aliases || {} }
     if (!me.edit) body.changes = await store.history()
     return reply(200, body)
   }
