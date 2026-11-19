@@ -6,12 +6,15 @@
  * Tarryn's cost rule (15/11/2026): a recipe's cost is never typed. It is worked out from its ingredients at the prices
  * we hold, batches rolled up per unit of what they make. A missing price names the ingredient; it is never R0.
  *
- * No imports, no Node or Deno features: it must run in a browser, in Deno and in Node unchanged.
+ * One import, buylines.js, which sits beside it in every copy (the page, the function, shared/). No Node or Deno features:
+ * it must run in a browser, in Deno and in Node unchanged.
  */
+
+import { validateOffer, validateProduct, validateExtras, newProduct } from './buylines.js'
 
 // ---------------------------------------------------------------- what may be saved
 
-export const FIELDS = new Set(['name', 'category', 'kind', 'makes', 'needed', 'notes', 'ingredients', 'takeaway', 'choices', 'anything_else', 'measure'])
+export const FIELDS = new Set(['name', 'category', 'kind', 'makes', 'needed', 'notes', 'ingredients', 'takeaway', 'choices', 'anything_else', 'measure', 'extras', 'moved'])
 // 'piece' is a shared kitchen measure (a slice of THIS loaf): only on a line that names its measure
 export const UNITS = ['g', 'kg', 'ml', 'L', 'each', 'slice', 'portion', 'part', 'piece']
 export const UNIT_WORDS = { g: 'g', kg: 'kg', ml: 'ml', L: 'L', each: 'each', slice: 'slice', portion: 'portion', part: 'of one' }
@@ -90,6 +93,10 @@ function cleanLine(l) {
     if (!/^p-[a-z0-9-]{1,40}$/.test(String(l.pack))) return no(`${name.value}: that packaging could not be found.`)
     out.pack = String(l.pack)
   }
+  // Sue's recipes (19/11): the part of her recipe it came from (Icing), and the question when her amount or name could
+  // not be put in our unit with certainty ("Sue wrote 2 punnets")
+  if (l.part != null && l.part !== '') out.part = String(l.part).slice(0, 60)
+  if (l.ask != null && l.ask !== '') out.ask = String(l.ask).slice(0, LIMIT.lineText)
   if (l.sug != null) {
     if (typeof l.sug !== 'object' || typeof l.sug.was !== 'string') return no(`${name.value}: its suggestion could not be read.`)
     out.sug = { was: l.sug.was.slice(0, LIMIT.lineText) }
@@ -212,6 +219,20 @@ export function validate(field, value) {
     case 'takeaway': return cleanLines(value, LIMIT.takeaway)
     case 'choices': return cleanChoices(value)
     case 'measure': return cleanMeasure(value)
+    case 'extras': return validateExtras(value)
+    case 'moved': {
+      if (value === null) return ok(null)
+      if (!value || typeof value !== 'object' || typeof value.text !== 'string' || value.text.length > 300) return no('That could not be read.')
+      const out = { text: value.text, undone: value.undone === true }
+      if (value.before && typeof value.before === 'object') {
+        const i = cleanLines(value.before.ingredients || [], LIMIT.lines)
+        const c = cleanChoices(value.before.choices || [])
+        if (!i.ok) return i
+        if (!c.ok) return c
+        out.before = { ingredients: i.value, choices: c.value }
+      }
+      return ok(out)
+    }
   }
   return no('That cannot be changed here.')
 }
@@ -237,6 +258,16 @@ export function lineCost(line, ctx, seen = new Set()) {
     return c.rand === null ? c : { ...c, rand: c.rand * line.adj }
   }
   if (line.qty == null) return { rand: null, missing: `${line.name}: no amount`, from: null }
+  // Where we buy it (19/11/2026): the product's cost per unit from its ticked supplier line with the latest invoice
+  // date (or an estimate, never saved); free for tap water. ctx.priceOf(line) -> { per, kind, estimate, free } | null.
+  if (ctx.priceOf && !line.batch) {
+    const u = ctx.priceOf(line)
+    if (u && u.free) return { rand: 0, missing: null, from: 'Free' }
+    if (u) {
+      const b = ['piece', 'each', 'portion', 'slice'].includes(line.unit) ? { q: line.qty, u: 'count' } : toBase(line.qty, line.unit)
+      if (b && b.u === u.kind) return { rand: b.q * u.per, missing: null, from: u.estimate ? 'Estimate' : 'Invoice' }
+    }
+  }
   // How we buy it (Tarryn, 17/11/2026): a line on an ingredient's buy row costs its amount / the kitchen units in the
   // pack x the pack price (2 slices of a 12-slice R55 loaf is 2/12 of R55); where the price we hold is for one unit
   // (an egg), the amount x that price.
@@ -355,12 +386,67 @@ export async function handle(req, store) {
   if (!me) return reply(404, { problem: 'This link is not right. Ask Tarryn for it again.' })
   if (req.action === 'open') {
     const all = await store.list()
-    const body = { who: me.who, canEdit: me.edit, recipes: all.recipes, notes: all.notes, items: all.items, measures: all.measures || [], packaging: all.packaging || [] }
+    const body = { who: me.who, canEdit: me.edit, recipes: all.recipes, notes: all.notes, items: all.items, measures: all.measures || [], packaging: all.packaging || [],
+      lines: all.lines || [], offers: all.offers || [], questions: all.questions || [] }
     if (!me.edit) body.changes = await store.history()
     return reply(200, body)
   }
-  if (req.action === 'save' || req.action === 'add') {
+  if (['save', 'add', 'offer', 'add-offer', 'product', 'add-product', 'answer'].includes(req.action)) {
     if (!me.edit) return reply(403, { problem: 'This link can look but not change anything.' })
+  }
+  // where we buy it (19/11/2026): one supplier line under one product
+  if (req.action === 'offer' || req.action === 'add-offer') {
+    if (!Number.isInteger(req.line) || req.line < 0 || !(typeof req.product === 'string' && MEASURE_KEY.test(req.product))) return reply(404, { problem: 'That line could not be found.' })
+    let value = {}
+    if (req.action === 'offer') {
+      const v = validateOffer(req.value)
+      if (!v.ok) return reply(400, { problem: v.problem })
+      value = v.value
+    } else if (req.value && typeof req.value === 'object') {
+      const f = req.value.figure
+      if (f != null && !(typeof f === 'number' && f > 0 && f <= 1000000)) return reply(400, { problem: 'How much is in one must be a number above nought.' })
+      value = { figure: f ?? null, figure_how: f != null && ['worked_out', 'from_code'].includes(req.value.figure_how) ? req.value.figure_how : null,
+        per_unit: ['kg', 'l'].includes(req.value.per_unit) ? req.value.per_unit : null,
+        guard: typeof req.value.guard === 'string' ? req.value.guard.slice(0, 120) : null, gold: typeof req.value.gold === 'string' ? req.value.gold.slice(0, 120) : null }
+    }
+    const r = req.action === 'offer' ? await store.saveOffer(req.line, req.product, value, me.who) : await store.addOffer(req.line, req.product, value, me.who)
+    if (r.missing) return reply(404, { problem: 'That line could not be found.' })
+    if (r.problem) return reply(400, { problem: r.problem })
+    if (r.taken && req.action === 'offer') return reply(409, { problem: 'That line is ticked under another product. Use Move here.', taken: r.taken })
+    return reply(200, r)
+  }
+  if (req.action === 'product') {
+    if (!(typeof req.product === 'string' && MEASURE_KEY.test(req.product))) return reply(404, { problem: 'That product could not be found.' })
+    const field = String(req.field || '')
+    let value
+    if (field === 'answer') {
+      const a = validateProduct('answer', req.value && req.value.answer)
+      if (!a.ok) return reply(400, { problem: a.problem })
+      const j = req.value.join == null ? { ok: true, value: null } : validateProduct('same_as', req.value.join)
+      if (!j.ok) return reply(400, { problem: j.problem })
+      value = { answer: a.value, join: j.value }
+    } else {
+      const v = validateProduct(field, req.value)
+      if (!v.ok) return reply(400, { problem: v.problem })
+      value = v.value
+    }
+    const r = await store.saveProduct(req.product, field, value, me.who)
+    if (r.missing) return reply(404, { problem: 'That product could not be found.' })
+    return reply(200, r)
+  }
+  if (req.action === 'add-product') {
+    const v = newProduct(req.value || {})
+    if (!v.ok) return reply(400, { problem: v.problem })
+    const grp = typeof req.value.grp === 'string' && req.value.grp.length <= 40 ? req.value.grp : null
+    const r = await store.addProduct({ ...v.value, grp }, me.who)
+    return reply(200, { ...r, product: v.value })
+  }
+  if (req.action === 'answer') {
+    if (!(typeof req.question === 'string' && /^[a-z0-9-]{1,80}$/.test(req.question))) return reply(404, { problem: 'That question could not be found.' })
+    if (typeof req.value !== 'string' || !req.value.trim() || req.value.length > 1000) return reply(400, { problem: 'Write an answer, up to 1000 letters.' })
+    const r = await store.answer(req.question, req.value.trim(), me.who)
+    if (r.missing) return reply(404, { problem: 'That question could not be found.' })
+    return reply(200, r)
   }
   if (req.action === 'save' && req.field === 'measure') {
     const v = validate('measure', req.value)
@@ -396,8 +482,62 @@ export async function handle(req, store) {
 }
 
 /** The store, in memory, answering as the database does (a save and its change line together). For tests. */
-export function memoryStore({ keys, recipes, items = [], notes = '', measures = [] }) {
+export function memoryStore({ keys, recipes, items = [], notes = '', measures = [], lines = [], offers = [], questions = [] }) {
   const s = {
+    offers: offers.map((o) => structuredClone(o)),
+    questions: new Map(questions.map((q) => [q.key, structuredClone(q)])),
+    async saveOffer(line, key, v, who) {
+      const o = s.offers.find((x) => x.line === line && x.key === key)
+      if (!o) return { missing: true }
+      if (o.figure_how === 'from_delivery' && ('figure' in v || 'at_delivery' in v)) return { problem: 'This was set when a delivery was booked in.' }
+      const other = s.offers.find((x) => x.line === line && x.ticked && x.key !== key)
+      const before = { ticked: o.ticked, figure: o.figure, figure_how: o.figure_how, ticked_under: other ? other.key : null }
+      if (v.move) { if (other) other.ticked = false; o.ticked = true }
+      else {
+        if (v.ticked === true && other) return { taken: other.key }
+        if ('ticked' in v) o.ticked = v.ticked
+        if (v.at_delivery) { o.figure = null; o.figure_how = 'at_delivery' } else if ('figure' in v) { o.figure = v.figure; o.figure_how = v.figure === null ? null : 'hers' }
+      }
+      const at = new Date().toISOString()
+      s.changes.push({ at, who, recipe: null, measure: key, line, field: 'offer', before, after: { ticked: o.ticked, figure: o.figure, figure_how: o.figure_how, ticked_under: null } })
+      return { at, changed: true }
+    },
+    async addOffer(line, key, v, who) {
+      if (!lines.some((l) => l.id === line) || !s.measures.has(key)) return { missing: true }
+      const other = s.offers.find((x) => x.line === line && x.ticked)
+      s.offers.push({ line, key, found: 'added', ticked: !other, ...v })
+      s.changes.push({ at: new Date().toISOString(), who, measure: key, line, field: 'offer', before: null, after: { added: true, ticked: !other } })
+      return { changed: true, ticked: !other, taken: other ? other.key : null }
+    },
+    async saveProduct(key, field, value, who) {
+      const m = s.measures.get(key)
+      if (!m) return { missing: true }
+      const at = new Date().toISOString()
+      if (field === 'answer') {
+        const before = { answer: m.answer ?? null, same_as: m.same_as ?? null }
+        m.answer = value.answer
+        if (value.join) m.same_as = value.join
+        s.changes.push({ at, who, measure: key, field: 'product', before, after: { answer: m.answer, same_as: m.same_as ?? null } })
+      } else {
+        const before = { [field]: m[field] ?? null }
+        m[field] = value
+        s.changes.push({ at, who, measure: key, field: 'product', before, after: { [field]: value } })
+      }
+      return { at, changed: true }
+    },
+    async addProduct(row, who) {
+      if (s.measures.has(row.key) || [...s.measures.values()].some((m) => m.name.toLowerCase() === row.name.toLowerCase())) return { exists: row.key }
+      s.measures.set(row.key, { ...row, value: row.kind === 'count' ? 1 : 1000, how: 'count' })
+      s.changes.push({ at: new Date().toISOString(), who, measure: row.key, field: 'product', before: null, after: { added: row.name } })
+      return { changed: true, key: row.key }
+    },
+    async answer(key, text, who) {
+      const q = s.questions.get(key)
+      if (!q) return { missing: true }
+      s.changes.push({ at: new Date().toISOString(), who, question: key, field: 'question', before: q.answer ?? null, after: text })
+      q.answer = text
+      return { changed: true }
+    },
     recipes: new Map(recipes.map((r) => [r.id, structuredClone(r)])),
     measures: new Map(measures.map((m) => [m.key, structuredClone(m)])),
     async saveMeasure(key, value, who) {
@@ -413,7 +553,7 @@ export function memoryStore({ keys, recipes, items = [], notes = '', measures = 
     notes,
     changes: [],
     async who(key) { return keys[key] || null },
-    async list() { return { recipes: [...s.recipes.values()], notes: s.notes, items, measures: [...s.measures.values()] } },
+    async list() { return { recipes: [...s.recipes.values()], notes: s.notes, items, measures: [...s.measures.values()], lines, offers: s.offers, questions: [...s.questions.values()] } },
     async save(id, field, value, who) {
       const at = new Date().toISOString()
       if (id === null) {

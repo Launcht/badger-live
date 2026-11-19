@@ -34,6 +34,8 @@
 
   <section class="notes" id="notes"></section>
 
+  <section class="block needs" id="needs"></section>
+
   <section class="block shared" id="measures"></section>
   <section class="block shared" id="sizes"></section>
 
@@ -41,6 +43,7 @@
   <div class="filter" id="filter">
     <button type="button" class="chip on" data-show="all">All</button>
     <button type="button" class="chip" data-show="todo">Not checked yet</button>
+    <button type="button" class="chip need-chip" data-show="needs" id="needChip">Only what needs me</button>
   </div>
 
   <div id="list"><p class="loading">Loading...</p></div>
@@ -65,7 +68,20 @@
   <p class="foot" id="foot"></p>
 </main>
 
-<datalist id="itemList"></datalist>
+<div class="picker" id="picker" hidden role="dialog" aria-label="Pick a product">
+  <div class="pk-box">
+    <div class="pk-top"><input id="pk-q" type="text" placeholder="Search the product list" aria-label="Search the product list"><button type="button" class="x" id="pk-close" aria-label="Close">&times;</button></div>
+    <div class="pk-res" id="pk-res"></div>
+    <button type="button" class="add" id="pk-add">Not on the list? Add a product</button>
+    <div class="pk-new" id="pk-new" hidden>
+      <p class="small">The name is built the same way as every product: which kind, what it is, then its form. The form sets how it is counted.</p>
+      <label>Variety or type <input id="pk-var" type="text" maxlength="40" placeholder="Apricot"></label>
+      <label>What it is <input id="pk-what" type="text" maxlength="40" placeholder="Jam"></label>
+      <label>Form <input id="pk-form" type="text" maxlength="40" placeholder="Tub, Portion, Grated, Sliced"></label>
+      <button type="button" class="btn" id="pk-make">Add this product</button>
+    </div>
+  </div>
+</div>
 <script type="module" src="app.js"></script>
 </body>
 </html>
