@@ -592,7 +592,7 @@ function amountRow(x, i) {
   const unit = x.target.startsWith('b:') ? (x.lines[0][2].unit === 'ml' ? 'ml' : 'g') : x.v.p.kind === 'count' ? plu(x.v.p.unit) : x.v.p.kind
   const ask = x.word && !['each', 'size'].includes(x.word) ? `How many ${unit} is 1 ${x.word}?` : x.word === 'each' ? `How many ${unit} is one?` : `Sue wrote "${x.text || 'no amount'}". How many ${unit}?`
   const eg = [...new Set(x.lines.map(([, , l]) => l.was || 'no amount'))].slice(0, 3).join('; ')
-  const hers = [...new Set(x.lines.map(([, , l]) => (String(l.ask || '').match(/Your own [^.]+ had [^.]+\./) || [])[0]).filter(Boolean))]
+  const hers = [...new Set(x.lines.map(([, , l]) => (String(l.ask || '').match(/Your own .+?(?= How many)/) || [])[0]).filter(Boolean))]
   return `<div class="nd-a" data-g="${i}"><span>${esc(ask)} <small class="muted">(Sue wrote ${esc(eg)})</small>${hers.length ? ` <small class="hers">${esc(hers.join(' '))}</small>` : ''}</span><span class="row"><input class="nd-qty" type="text" inputmode="decimal" aria-label="${esc(x.title)}: ${esc(ask)}"${ro()}><span>${esc(unit)}</span></span></div>`
 }
 let NEEDS = null
