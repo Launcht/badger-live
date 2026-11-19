@@ -22,7 +22,7 @@
 const SPELL = {
   mozarella: 'mozzarella', hellmanns: 'hellmans', hellmann: 'hellmans', marmelade: 'marmalade', yogurt: 'yoghurt',
   tumeric: 'turmeric', ecofresh: 'fresh', smok: 'smoked', dry: 'dried', sundried: 'dried', can: 'canned', tin: 'canned',
-  tinned: 'canned', choc: 'chocolate', ched: 'cheddar', blk: 'black', mix: 'mixed',
+  tinned: 'canned', choc: 'chocolate', ched: 'cheddar', blk: 'black', mix: 'mixed', soya: 'soy',
 }
 /** Plural to singular, so Blueberry and Blueberries are one word. */
 export function stem(w) {

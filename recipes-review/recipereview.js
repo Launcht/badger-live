@@ -526,6 +526,17 @@ export function memoryStore({ keys, recipes, items = [], notes = '', measures = 
         const before = { answer: m.answer ?? null, same_as: m.same_as ?? null }
         m.answer = value.answer
         if (value.join) m.same_as = value.join
+        const both = ((m.ask && m.ask.options) || []).find((o) => o.label === value.answer && o.both)
+        if (both) {
+          const b = both.both
+          if (!s.measures.has(b.key)) s.measures.set(b.key, { key: b.key, name: b.name, unit: b.unit, kind: b.kind, grp: b.grp })
+          for (const x of b.lines) {
+            for (const o of s.offers) if (o.line === x.line && o.ticked) o.ticked = false
+            const have = s.offers.find((o) => o.line === x.line && o.key === b.key)
+            if (have) have.ticked = true
+            else s.offers.push({ line: x.line, key: b.key, found: 'match', ticked: true, figure: x.figure, figure_how: x.figure_how })
+          }
+        }
         s.changes.push({ at, who, measure: key, field: 'product', before, after: { answer: m.answer, same_as: m.same_as ?? null } })
       } else {
         const before = { [field]: m[field] ?? null }

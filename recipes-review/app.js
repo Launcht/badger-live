@@ -269,13 +269,12 @@ function offerHtml(kept, o) {
   const l = lineOf(o)
   const other = tickedElsewhere(o.line, kept)
   const answered = p.answer && o.guard && p.answer.toLowerCase().includes((o.guard.match(/as (\w+)/) || [])[1]?.toLowerCase() || '###')
-  if (o.guard && p.answer && !answered && !o.ticked) return '' // her answer says it is a different product
   return `<div class="of${o.ticked ? ' on' : ''}${other ? ' elsewhere' : ''}" data-line="${o.line}" data-okey="${esc(o.key)}">
     <label class="of-tick"><input type="checkbox" data-act="tick"${o.ticked ? ' checked' : ''}${other || !S.canEdit ? ' disabled' : ''}>
       <span><b>${esc(l.supplier)}</b> ${esc(supplierCode(l))}</span></label>
     <div class="of-facts">${esc(lineFacts(l))}</div>
     ${other ? `<div class="of-else">Ticked under ${esc(prodName(other))}.${S.canEdit ? ' <button type="button" class="linkish" data-act="move">Move here</button>' : ''}</div>` : figureHtml(p, o)}
-    ${o.guard && !answered ? `<div class="of-warn">${esc(o.guard)}</div>` : ''}
+    ${o.guard && !answered ? `<div class="of-warn">${esc(o.guard)}${p.answer ? ` Your answer: ${esc(p.answer)}.` : ''}</div>` : ''}
   </div>`
 }
 function rowSuggestion(p, kept) {
@@ -290,7 +289,7 @@ function askHtml(kept, where = 'card', keys = [kept]) {
   const a = p.ask
   if (p.answer) return `<div class="ask done">${esc(a.q)} <b>${esc(p.answer)}</b>${/^Settled: /.test(p.answered_by || '') ? ` <small class="muted">${esc(p.answered_by)}</small>` : ''}${S.canEdit ? ' <button type="button" class="linkish" data-act="re-ask">Change</button>' : ''}</div>`
   const opts = a.options.length
-    ? a.options.map((o) => `<button type="button" class="opt-b${o.label === a.pick ? ' pick' : ''}" data-act="answer" data-a="${esc(o.label)}"${o.join ? ` data-join="${esc(o.join)}"` : ''}${ro()}>${esc(o.label)}${o.label === a.pick ? ' <small>my guess</small>' : ''}</button>`).join('')
+    ? a.options.map((o) => `<button type="button" class="opt-b${o.label === a.pick ? ' pick' : ''}" data-act="answer" data-a="${esc(o.label)}"${o.join ? ` data-join="${esc(o.join)}"` : ''}${o.both ? ' data-both="1"' : ''}${ro()}>${esc(o.label)}${o.label === a.pick ? ' <small>my guess</small>' : ''}</button>`).join('')
     : `<input class="ask-text" type="text" maxlength="300" placeholder="Type your answer" aria-label="${esc(a.q)}"${ro()}>`
   return `<div class="ask" data-key="${esc(kept)}" data-keys="${esc(keys.join(' '))}" data-where="${where}"><p>${esc(a.q)}</p><div class="opts">${opts}</div></div>`
 }
@@ -959,6 +958,12 @@ function onBuyClick(b) {
     const m = prod(k)
     if (a === 're-ask') { m.answer = null; redrawAll(); return true }
     const join = b.dataset.join || null
+    if (b.dataset.both) {
+      // the server makes the second product and ticks its line under it; then the page reads it all again
+      m.answer = b.dataset.a
+      act(`prod:${k}:answer`, { action: 'product', product: k, field: 'answer', value: { answer: m.answer, join: null } }, 0, () => reload())
+      return true
+    }
     for (const kk of (box && box.dataset.keys ? box.dataset.keys.split(' ') : [k])) {
       const mm = prod(kk)
       mm.answer = b.dataset.a
@@ -1387,6 +1392,29 @@ function renderChanges(changes) {
 
 // ---------------------------------------------------------------- start
 
+/** Read everything again (after the server made something, like the second product of a "Both"), keeping open cards open. */
+async function reload() {
+  const r = await call({ action: 'open' })
+  if (r.status !== 200) return
+  const open = [...document.querySelectorAll('.card details.more[open]')].map((d) => d.closest('.card').dataset.id)
+  load(r.body)
+  render()
+  for (const id of open) { const d = document.querySelector(`#r-${CSS.escape(id)} details.more`); if (d) d.open = true }
+}
+function load(d) {
+  S.recipes = d.recipes
+  S.byId = new Map(S.recipes.map((x) => [x.id, x]))
+  S.items = d.items
+  S.itemById = new Map(d.items.map((i) => [i.id, i]))
+  S.measures = new Map((d.measures || []).map((m) => [m.key, { ...m, value: m.value == null ? null : Number(m.value), grams: m.grams == null ? null : Number(m.grams), price: m.price == null ? null : Number(m.price), was: m.was || [] }]))
+  S.lines = new Map((d.lines || []).map((l) => [l.id, { ...l, price: l.price == null ? null : Number(l.price) }]))
+  S.offers = (d.offers || []).map((o) => ({ ...o, figure: o.figure == null ? null : Number(o.figure) }))
+  S.questions = d.questions || []
+  S.aliases = new Map()
+  for (const m of S.measures.values()) for (const n of [m.name, ...(m.was || [])]) if (!S.aliases.has(normName(n))) S.aliases.set(normName(n), m.key)
+  for (const [n, k] of Object.entries(d.aliases || {})) if (!S.aliases.has(n) && S.measures.has(k)) S.aliases.set(n, k)
+}
+
 async function start() {
   if (!key) {
     $('#list').innerHTML = '<p class="loading">This link is missing its key. Please use the link Tarryn sent.</p>'
@@ -1409,17 +1437,7 @@ async function start() {
   }
   S.canEdit = d.canEdit
   S.who = d.who
-  S.recipes = d.recipes
-  S.byId = new Map(S.recipes.map((x) => [x.id, x]))
-  S.items = d.items
-  S.itemById = new Map(d.items.map((i) => [i.id, i]))
-  S.measures = new Map((d.measures || []).map((m) => [m.key, { ...m, value: m.value == null ? null : Number(m.value), grams: m.grams == null ? null : Number(m.grams), price: m.price == null ? null : Number(m.price), was: m.was || [] }]))
-  S.lines = new Map((d.lines || []).map((l) => [l.id, { ...l, price: l.price == null ? null : Number(l.price) }]))
-  S.offers = (d.offers || []).map((o) => ({ ...o, figure: o.figure == null ? null : Number(o.figure) }))
-  S.questions = d.questions || []
-  S.aliases = new Map()
-  for (const m of S.measures.values()) for (const n of [m.name, ...(m.was || [])]) if (!S.aliases.has(normName(n))) S.aliases.set(normName(n), m.key)
-  for (const [n, k] of Object.entries(d.aliases || {})) if (!S.aliases.has(n) && S.measures.has(k)) S.aliases.set(n, k)
+  load(d)
   $('#anythingElse').value = d.notes || ''
   if (!S.canEdit) {
     document.body.classList.add('view')
