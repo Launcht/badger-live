@@ -524,12 +524,24 @@ export function memoryStore({ keys, recipes, items = [], notes = '', measures = 
       const at = new Date().toISOString()
       if (field === 'answer') {
         const before = { answer: m.answer ?? null, same_as: m.same_as ?? null }
-        m.answer = value.answer
+        const prev = ((m.ask && m.ask.options) || []).find((o) => o.label === m.answer && o.both)
+        if (prev && m.answer !== value.answer && s.measures.has(prev.both.key)) {
+          const made = s.measures.get(prev.both.key)
+          for (const mv of made.moved || []) {
+            s.offers = s.offers.filter((o) => !(o.line === mv.line && o.key === prev.both.key))
+            const back = s.offers.find((o) => o.line === mv.line && o.key === mv.from)
+            if (back && !s.offers.some((o) => o.line === mv.line && o.ticked)) back.ticked = true
+          }
+          s.offers = s.offers.filter((o) => o.key !== prev.both.key)
+          s.measures.delete(prev.both.key)
+        }
+        m.answer = value.answer || null
         if (value.join) m.same_as = value.join
         const both = ((m.ask && m.ask.options) || []).find((o) => o.label === value.answer && o.both)
         if (both) {
           const b = both.both
-          if (!s.measures.has(b.key)) s.measures.set(b.key, { key: b.key, name: b.name, unit: b.unit, kind: b.kind, grp: b.grp })
+          const moved = b.lines.map((x) => ({ line: x.line, from: (s.offers.find((o) => o.line === x.line && o.ticked) || {}).key || null }))
+          if (!s.measures.has(b.key)) s.measures.set(b.key, { key: b.key, name: b.name, unit: b.unit, kind: b.kind, grp: b.grp, moved })
           for (const x of b.lines) {
             for (const o of s.offers) if (o.line === x.line && o.ticked) o.ticked = false
             const have = s.offers.find((o) => o.line === x.line && o.key === b.key)

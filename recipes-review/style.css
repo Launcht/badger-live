@@ -354,6 +354,7 @@ body.view .linkish, body.view .addline { display: none; }
 }
 
 /* Fixes after the test (04, 19/11/2026) */
+.hers { display: block; color: #6a4500; font-weight: 600; }
 .filter { flex-wrap: wrap; }
 .nd-n { display: inline-block; color: var(--mid); font-size: 12px; font-weight: 400; }
 .nd-s { display: flex; gap: 8px; align-items: flex-start; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 14px; overflow-wrap: anywhere; }

@@ -287,6 +287,8 @@ function askHtml(kept, where = 'card', keys = [kept]) {
   const p = prod(kept)
   if (!p || !p.ask) return ''
   const a = p.ask
+  const madeBoth = p.answer && a.options.find((o) => o.label === p.answer && o.both)
+  if (madeBoth) return `<div class="ask done" data-key="${esc(kept)}">${esc(a.q)} <b>${esc(p.answer)}</b><br><small>This made a second product, ${esc(madeBoth.both.name)}, with its invoice line ticked under it.</small>${S.canEdit ? ' <button type="button" class="linkish" data-act="undo-both">Undo: one product only</button>' : ''}</div>`
   if (p.answer) return `<div class="ask done">${esc(a.q)} <b>${esc(p.answer)}</b>${/^Settled: /.test(p.answered_by || '') ? ` <small class="muted">${esc(p.answered_by)}</small>` : ''}${S.canEdit ? ' <button type="button" class="linkish" data-act="re-ask">Change</button>' : ''}</div>`
   const opts = a.options.length
     ? a.options.map((o) => `<button type="button" class="opt-b${o.label === a.pick ? ' pick' : ''}" data-act="answer" data-a="${esc(o.label)}"${o.join ? ` data-join="${esc(o.join)}"` : ''}${o.both ? ' data-both="1"' : ''}${ro()}>${esc(o.label)}${o.label === a.pick ? ' <small>my guess</small>' : ''}</button>`).join('')
@@ -590,7 +592,8 @@ function amountRow(x, i) {
   const unit = x.target.startsWith('b:') ? (x.lines[0][2].unit === 'ml' ? 'ml' : 'g') : x.v.p.kind === 'count' ? plu(x.v.p.unit) : x.v.p.kind
   const ask = x.word && !['each', 'size'].includes(x.word) ? `How many ${unit} is 1 ${x.word}?` : x.word === 'each' ? `How many ${unit} is one?` : `Sue wrote "${x.text || 'no amount'}". How many ${unit}?`
   const eg = [...new Set(x.lines.map(([, , l]) => l.was || 'no amount'))].slice(0, 3).join('; ')
-  return `<div class="nd-a" data-g="${i}"><span>${esc(ask)} <small class="muted">(Sue wrote ${esc(eg)})</small></span><span class="row"><input class="nd-qty" type="text" inputmode="decimal" aria-label="${esc(x.title)}: ${esc(ask)}"${ro()}><span>${esc(unit)}</span></span></div>`
+  const hers = [...new Set(x.lines.map(([, , l]) => (String(l.ask || '').match(/Your own [^.]+ had [^.]+\./) || [])[0]).filter(Boolean))]
+  return `<div class="nd-a" data-g="${i}"><span>${esc(ask)} <small class="muted">(Sue wrote ${esc(eg)})</small>${hers.length ? ` <small class="hers">${esc(hers.join(' '))}</small>` : ''}</span><span class="row"><input class="nd-qty" type="text" inputmode="decimal" aria-label="${esc(x.title)}: ${esc(ask)}"${ro()}><span>${esc(unit)}</span></span></div>`
 }
 let NEEDS = null
 function renderNeeds() {
@@ -952,13 +955,20 @@ function onBuyClick(b) {
     redrawAll()
     return true
   }
+  if (a === 'undo-both') {
+    const k = b.closest('.ask').dataset.key
+    if (!confirm('Take back "Both"? The second product goes and its invoice line goes back where it was.')) return true
+    act(`prod:${k}:answer`, { action: 'product', product: k, field: 'answer', value: { answer: '', join: null } }, 0, () => reload())
+    return true
+  }
   if (a === 'answer' || a === 're-ask') {
     const box = b.closest('.ask')
     const k = box ? box.dataset.key : b.closest('.wb').dataset.key
     const m = prod(k)
     if (a === 're-ask') { m.answer = null; redrawAll(); return true }
     const join = b.dataset.join || null
-    if (b.dataset.both) {
+    const wasBoth = m.answer && m.ask.options.some((o) => o.label === m.answer && o.both)
+    if (b.dataset.both || wasBoth) {
       // the server makes the second product and ticks its line under it; then the page reads it all again
       m.answer = b.dataset.a
       act(`prod:${k}:answer`, { action: 'product', product: k, field: 'answer', value: { answer: m.answer, join: null } }, 0, () => reload())
@@ -1406,6 +1416,7 @@ function load(d) {
   S.byId = new Map(S.recipes.map((x) => [x.id, x]))
   S.items = d.items
   S.itemById = new Map(d.items.map((i) => [i.id, i]))
+  d.measures = (d.measures || []).filter((m) => !(m.seed && m.seed.removed))
   S.measures = new Map((d.measures || []).map((m) => [m.key, { ...m, value: m.value == null ? null : Number(m.value), grams: m.grams == null ? null : Number(m.grams), price: m.price == null ? null : Number(m.price), was: m.was || [] }]))
   S.lines = new Map((d.lines || []).map((l) => [l.id, { ...l, price: l.price == null ? null : Number(l.price) }]))
   S.offers = (d.offers || []).map((o) => ({ ...o, figure: o.figure == null ? null : Number(o.figure) }))
