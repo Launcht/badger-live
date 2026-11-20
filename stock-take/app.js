@@ -185,7 +185,7 @@ function unitsHtml(it) {
       <input class="uo" type="text" maxlength="30" data-f="unit" value="${esc(other)}" placeholder="Type the unit" aria-label="Other unit for ${esc(it.name)}" autocomplete="off"${ro()}${other ? '' : ' hidden'}></div>`
 }
 /** The unit beside the reorder level: the one she picked for the count, or a word saying it follows that one. */
-const rlUnit = (it) => (it.unit ? it.unit : 'same unit as the count')
+const rlUnit = (it) => (it.unit ? it.unit : 'unit as counted')
 function nameHtml(it) {
   const renamed = !it.added && it.sheet_name && it.name !== it.sheet_name
   const tag = it.ours ? ' <span class="tag check">Added by us - check</span>' : it.added ? ' <span class="tag">Added</span>' : ''
