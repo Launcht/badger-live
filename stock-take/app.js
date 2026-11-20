@@ -125,7 +125,7 @@ addEventListener('beforeunload', (e) => {
 
 const ro = () => (S.canEdit ? '' : ' disabled')
 const REASON = Object.fromEntries(GONE_REASONS)
-const stateOf = (it) => (it.count === null || it.count === undefined ? 'blank' : it.count === 0 ? 'zero' : 'counted')
+const stateOf = (it) => (it.count === null || it.count === undefined ? 's-blank' : it.count === 0 ? 's-zero' : 's-counted')
 
 function unitsHtml(it) {
   const likely = unitsFor(it)
@@ -280,7 +280,7 @@ function nextCount(from) {
 
 function setCount(it, row, value, wait) {
   it.count = value
-  row.classList.remove('blank', 'zero', 'counted')
+  row.classList.remove('s-blank', 's-zero', 's-counted')
   row.classList.add(stateOf(it))
   const z = row.querySelector('.zero')
   z.classList.toggle('on', value === 0)

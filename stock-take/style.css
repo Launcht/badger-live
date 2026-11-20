@@ -67,8 +67,8 @@ input:disabled, select:disabled { background: var(--wash); color: var(--ink); op
 
 .it { padding: 10px 12px 12px; border-top: 1px solid var(--line); border-left: 5px solid transparent; scroll-margin-top: 140px; }
 .items > .it:first-child { border-top: 0; }
-.it.counted { border-left-color: var(--good); }
-.it.zero { border-left-color: var(--mid); background: #fcfaf7; }
+.it.s-counted { border-left-color: var(--good); }
+.it.s-zero { border-left-color: var(--mid); background: #fcfaf7; }
 .it-name { margin-bottom: 6px; }
 .nm { font-weight: 600; font-size: 16px; overflow-wrap: anywhere; }
 .was, .ca { display: block; font-size: 12px; color: var(--mid); }
