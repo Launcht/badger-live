@@ -184,6 +184,8 @@ function unitsHtml(it) {
       ${other || !S.canEdit ? '' : '<button type="button" class="u more" data-act="other">Other</button>'}
       <input class="uo" type="text" maxlength="30" data-f="unit" value="${esc(other)}" placeholder="Type the unit" aria-label="Other unit for ${esc(it.name)}" autocomplete="off"${ro()}${other ? '' : ' hidden'}></div>`
 }
+/** The unit beside the reorder level: the one she picked for the count, or a word saying it follows that one. */
+const rlUnit = (it) => (it.unit ? it.unit : 'same unit as the count')
 function nameHtml(it) {
   const renamed = !it.added && it.sheet_name && it.name !== it.sheet_name
   const tag = it.ours ? ' <span class="tag check">Added by us - check</span>' : it.added ? ' <span class="tag">Added</span>' : ''
@@ -199,6 +201,9 @@ function itemHtml(it) {
       <div class="cbox"><input class="cnt" type="text" inputmode="decimal" enterkeyhint="next" data-f="count" value="${esc(num(it.count))}" placeholder="Count" aria-label="Count for ${esc(it.name)}" autocomplete="off"${ro()}>
         <div class="rb" aria-live="polite"></div><div class="askc" hidden></div></div>
       <button type="button" class="zero${it.count === 0 ? ' on' : ''}" data-act="zero" aria-pressed="${it.count === 0}"${ro()}>None (0)</button>
+      <div class="rl"><label for="rl-${esc(it.id)}">Reorder when it gets to</label>
+        <div class="rl-row"><input id="rl-${esc(it.id)}" class="rl-in" type="text" inputmode="decimal" data-f="reorder" value="${esc(num(it.reorder))}" placeholder="-" autocomplete="off"${ro()}>
+        <span class="rl-u">${esc(rlUnit(it))}</span></div></div>
     </div>
     ${unitsHtml(it)}
     <div class="it-foot">
@@ -337,6 +342,7 @@ function setCount(it, row, value, wait) {
 function setUnit(it, row, u) {
   it.unit = u
   for (const b of $$('.u[data-u]', row)) b.classList.toggle('on', b.dataset.u === u)
+  row.querySelector('.rl-u').textContent = rlUnit(it)
   save(it.id, 'unit', u)
   refresh(it)
 }
@@ -390,6 +396,11 @@ function applyField(id, field, value, force = false) {
     z.setAttribute('aria-pressed', String(value === 0))
   } else if (field === 'unit' && busyF !== 'unit') {
     row.querySelector('.units').outerHTML = unitsHtml(it)
+    row.querySelector('.rl-u').textContent = rlUnit(it)
+  } else if (field === 'reorder' && busyF !== 'reorder') {
+    const rl = row.querySelector('.rl-in')
+    rl.value = num(value)
+    good(rl)
   } else if (field === 'note' && busyF !== 'note') {
     const nt = row.querySelector('.nt')
     nt.value = value || ''
@@ -408,7 +419,8 @@ async function look() {
   try { r = await call({ action: 'open' }) } catch { return }
   if (r.status !== 200 || busy || queue.size) return
   for (const raw of r.body.items) {
-    const s = { ...raw, count: raw.count === null || raw.count === undefined ? null : Number(raw.count), unit: raw.unit || '', note: raw.note || '' }
+    const s = { ...raw, count: raw.count === null || raw.count === undefined ? null : Number(raw.count),
+      reorder: raw.reorder === null || raw.reorder === undefined ? null : Number(raw.reorder), unit: raw.unit || '', note: raw.note || '' }
     const it = S.byId.get(s.id)
     if (!it) {
       // a line added on another screen
@@ -471,12 +483,20 @@ function onInput(e, final) {
     good(el)
     if (v.value !== it.count) setCount(it, row, v.value, final ? 0 : 700)
     else if (final) save(it.id, 'count', v.value, 0)
+  } else if (f === 'reorder') {
+    const v = parseCount(el.value)
+    if (!v.ok) return bad(el, v.problem)
+    if (v.ask) return bad(el, `type ${v.ask[0]} or ${v.ask[1]}, so it cannot be read the wrong way.`)
+    good(el)
+    it.reorder = v.value
+    save(it.id, 'reorder', v.value, final ? 0 : 700)
   } else if (f === 'unit') {
     const v = validate('unit', el.value)
     if (!v.ok) return bad(el, v.problem)
     good(el)
     it.unit = v.value
     for (const b of $$('.u[data-u]', row)) b.classList.toggle('on', b.dataset.u === v.value)
+    row.querySelector('.rl-u').textContent = rlUnit(it)
     save(it.id, 'unit', v.value, final ? 0 : 900)
     refresh(it)
   } else if (f === 'note') {
@@ -577,7 +597,7 @@ function wire() {
       onInput({ target: el }, true)
       if (!el.closest('.it').querySelector('.askc').hidden) return
       nextCount(el)
-    } else if (el.classList.contains('nt') && e.key === 'Enter') {
+    } else if ((el.classList.contains('nt') || el.classList.contains('rl-in')) && e.key === 'Enter') {
       e.preventDefault()
       onInput({ target: el }, true)
       nextCount(el.closest('.it').querySelector('.cnt'))
@@ -697,11 +717,11 @@ function wire() {
 
 // ---------------------------------------------------------------- Tarryn's view: every change
 
-const FIELD_WORDS = { count: 'count', unit: 'unit', note: 'note', name: 'renamed', gone: 'Remove', gone_reason: 'why removed', same_as: 'same as',
+const FIELD_WORDS = { count: 'count', reorder: 'reorder when it gets to', unit: 'unit', note: 'note', name: 'renamed', gone: 'Remove', gone_reason: 'why removed', same_as: 'same as',
   date: 'date', counted_by: 'counted by', checked_by: 'checked by', added: 'added an item' }
 function said(c, v) {
   if (c.field === 'gone') return v ? 'Removed from the list' : 'Undo: back on the list'
-  if (v === null || v === undefined || v === '') return c.field === 'count' ? '<i>not counted</i>' : '<i>empty</i>'
+  if (v === null || v === undefined || v === '') return c.field === 'count' ? '<i>not counted</i>' : c.field === 'reorder' ? '<i>no level</i>' : '<i>empty</i>'
   if (c.field === 'gone_reason') return esc(REASON[v] || v)
   if (c.field === 'same_as') return esc((S.byId.get(v) || {}).name || v)
   if (c.field === 'date') return esc(String(v).split('-').reverse().join('/'))
@@ -749,7 +769,8 @@ async function start() {
   }
   S.canEdit = d.canEdit
   S.who = d.who
-  S.items = d.items.map((i) => ({ ...i, count: i.count === null || i.count === undefined ? null : Number(i.count), unit: i.unit || '', note: i.note || '' }))
+  S.items = d.items.map((i) => ({ ...i, count: i.count === null || i.count === undefined ? null : Number(i.count),
+    reorder: i.reorder === null || i.reorder === undefined ? null : Number(i.reorder), unit: i.unit || '', note: i.note || '' }))
   S.byId = new Map(S.items.map((x) => [x.id, x]))
   for (const it of S.items) if (!it.added && !S.shelves.includes(it.shelf)) S.shelves.push(it.shelf)
   const sheet = { ...(d.sheet || {}) }

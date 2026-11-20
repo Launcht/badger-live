@@ -20,7 +20,8 @@
 /** The paper's last block, "Anything on the shelf that is not on this sheet": a shelf of its own on the page. */
 export const OTHER_SHELF = 'Not on the sheet'
 export const SHEET_FIELDS = ['date', 'counted_by', 'checked_by']
-export const ITEM_FIELDS = ['count', 'unit', 'note', 'name', 'gone', 'gone_reason', 'same_as']
+// reorder (Tarryn 20/11, later): the level to reorder at, in the unit picked for the count; blank is no level, never 0
+export const ITEM_FIELDS = ['count', 'unit', 'note', 'name', 'gone', 'gone_reason', 'same_as', 'reorder']
 export const FIELDS = new Set([...SHEET_FIELDS, ...ITEM_FIELDS])
 export const GONE_REASONS = [['duplicate', 'Duplicate'], ['wrong', 'Wrong item'], ['not_stocked', 'We don\'t stock this']]
 export const ID = /^(t-\d{3}|new-[a-z0-9]{4,30})$/
@@ -86,7 +87,8 @@ function dateOk(v) {
 /** One field, cleaned, or the reason it cannot be saved. same_as is checked against the list by the door. */
 export function validate(field, value) {
   switch (field) {
-    case 'count': return parseCount(value)
+    case 'count':
+    case 'reorder': return parseCount(value)
     case 'unit':
     case 'note':
     case 'counted_by':
@@ -248,7 +250,7 @@ export async function handle(req, store) {
     const row = {
       id: `new-${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`.slice(0, 34), sort, shelf: req.shelf,
       shelf_sort: shelfSort, name: name.value, sheet_name: '', comes_as: '', on_invoice: null, on_menu: null, count: count.value,
-      unit: unit.value, note: note.value, added: true, ours: false, gone: false, gone_reason: null, same_as: null,
+      unit: unit.value, note: note.value, reorder: null, added: true, ours: false, gone: false, gone_reason: null, same_as: null,
     }
     const saved = await store.add(row, me.who)
     return reply(200, { item: saved })
