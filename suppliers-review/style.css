@@ -301,3 +301,28 @@ body.view .foot-row .btn { display: none; }
 /* Fixes after the independent test (03) */
 .need.ask-used { background: #fff4dc; border-radius: 10px; margin: 6px 12px 0; padding: 10px; }
 .need-msg { flex-basis: 100%; margin: 4px 0 0; font-size: 14px; font-weight: 600; color: var(--amber); }
+
+/* Ordering, deliveries and paying (20/11/2026): the admin's fields, open on every card she still uses */
+.extra { margin: 4px 12px 6px; padding: 10px 12px 4px; border-radius: 12px; background: var(--wash); border: 1px solid var(--line); }
+.x-title { margin: 0 0 2px; font-weight: 600; font-size: 15px; }
+.x-head { margin: 12px 0 0; font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--mid); }
+.extra .field { margin: 8px 0 10px; }
+.x-hint { margin: 6px 0 0; font-size: 12px; color: var(--mid); }
+.extra .ways { grid-template-columns: repeat(3, 1fr); }
+.picks { display: flex; flex-wrap: wrap; gap: 6px; }
+.pick { min-height: 44px; padding: 0 12px; border-radius: 22px; border: 1.5px solid var(--line); background: #fff; font-weight: 600; font-size: 14px; cursor: pointer; }
+.pick.on { background: var(--good); border-color: var(--good); color: #fff; }
+.pick:disabled { cursor: default; }
+.days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.day { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; min-height: 52px; border: 1.5px solid var(--line); border-radius: 10px; background: #fff; cursor: pointer; font-weight: 600; font-size: 13px; }
+.day input { width: 18px; height: 18px; margin: 0; accent-color: var(--good); }
+.day.on { border-color: var(--good); background: #f1f8f4; }
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; }
+input[type=time] { width: 100%; min-height: 44px; border: 1px solid #d9cfc4; border-radius: 10px; background: #fff; padding: 8px 10px; }
+.card.unused .extra, .card.merged-card .extra { display: none; }
+.note.new { border-color: var(--good); }
+@media (min-width: 700px) {
+  .extra { margin-left: 16px; margin-right: 16px; padding: 12px 16px 6px; }
+  .extra .ways { grid-template-columns: repeat(5, 1fr); }
+  .pair { max-width: 420px; }
+}

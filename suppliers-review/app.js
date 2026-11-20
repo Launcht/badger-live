@@ -4,7 +4,8 @@
  * deploy, so the page and the server cannot disagree. The key is in the link after # (never sent to a web server's
  * log), and goes in the request body. The page holds no supplier details and no notes: all of it comes with the key.
  */
-import { validate, progress, isChecked, stillSuggested, ORDER_WAYS, ORDER_WORDS, localPhone, confirmProblem, carryAcross } from './supplierreview.js'
+import { validate, progress, isChecked, stillSuggested, ORDER_WAYS, ORDER_WORDS, localPhone, confirmProblem, carryAcross,
+  DAYS, LEAD_TIMES, DAY_LEADS, PAY_HOW, windowOk, WINDOW_PROBLEM } from './supplierreview.js'
 
 const API = 'https://nptyrtjdvqglgwkaepce.supabase.co/functions/v1/badger-suppliers'
 const key = new URLSearchParams(location.hash.slice(1)).get('k') || ''
@@ -163,18 +164,19 @@ function sourceWords(s) {
 function orderHints(s) {
   const out = []
   const wa = s.wa_same ? s.phone : s.whatsapp
-  if (s.order_by.includes('email') && !s.email) out.push('Add their email above.')
-  if (s.order_by.includes('whatsapp') && !wa) out.push('Add their WhatsApp number above.')
-  if (s.order_by.includes('phone') && !s.phone) out.push('Add their phone number above.')
-  if (s.still_used === true && !s.order_by.length) out.push('Tick at least one, if you know.')
+  const where = isChecked(s) ? ': tap Change below to add it.' : ' above.'
+  const ways = shownWays(s)
+  if (ways.includes('email') && !s.email) out.push(`No email yet${where}`)
+  if (ways.includes('whatsapp') && !wa) out.push(`No WhatsApp number yet${where}`)
+  if (ways.includes('phone') && !s.phone) out.push(`No phone number yet${where}`)
+  if (s.still_used === true && !ways.length) out.push('Tick at least one, if you know.')
   return out.length ? `<p class="hint">${out.map(esc).join(' ')}</p>` : ''
 }
 function summaryHtml(s) {
   if (s.still_used === false) return '<div class="sum"><p>Not used any more.</p></div>'
   const wa = s.wa_same ? s.phone : s.whatsapp
   const bits = [s.contact, s.email, s.phone && `Phone ${showPhone(s.phone)}`, wa && `WhatsApp ${showPhone(wa)}`].filter(Boolean)
-  const how = s.order_by.length ? `Orders by ${s.order_by.map((w) => ORDER_WORDS[w]).join(', ')}` : 'How they take orders: not ticked'
-  return `<div class="sum"><p>Still used: Yes</p>${bits.length ? `<p>${bits.map(esc).join(' / ')}</p>` : '<p>No contact details.</p>'}<p>${esc(how)}</p></div>`
+  return `<div class="sum"><p>Still used: Yes</p>${bits.length ? `<p>${bits.map(esc).join(' / ')}</p>` : '<p>No contact details.</p>'}</div>`
 }
 function askHtml(s) {
   const a = s.seed && s.seed.ask
@@ -203,17 +205,74 @@ function fieldsHtml(s) {
         <div class="wa-own"${s.wa_same ? ' hidden' : ''}><input id="${fid(s, 'whatsapp')}" data-f="whatsapp" type="tel" inputmode="tel" autocomplete="off" maxlength="30" placeholder="WhatsApp number" aria-label="WhatsApp number" value="${esc(showPhone(s.whatsapp))}"${ro()}></div>
       </div>
     </div>
-    <div class="field">
-      <div class="lbl-row"><span class="lab">How do they take orders?</span>${sugTag(s, 'order_by')}</div>
-      <div class="ways">${ORDER_WAYS.map((w) => `<label class="way${s.order_by.includes(w) ? ' on' : ''}"><input type="checkbox" data-f="order_by" value="${w}"${s.order_by.includes(w) ? ' checked' : ''}${ro()}>${ORDER_WORDS[w]}</label>`).join('')}</div>
-      <div class="hints">${orderHints(s)}</div>
-    </div>
     <div class="field keep">
       <div class="lbl-row"><label for="${fid(s, 'notes')}">Notes</label></div>
       <textarea id="${fid(s, 'notes')}" data-f="notes" rows="2" maxlength="2000" placeholder="Anything else about them"${ro()}>${esc(s.notes)}</textarea>
     </div>
   </div>`
 }
+// ---------------------------------------------------------------- ordering, deliveries and paying (20/11/2026)
+// The admin's own fields and choices (shared/supplierchoices.js). Open on every card she still uses, checked or not, so
+// she never has to tap Change to fill them in. What the suppliers list already holds shows as Suggested (`held`, read
+// only); nothing is stored for her until she taps or types.
+const isEmpty = (v) => v === null || v === undefined || v === '' || (Array.isArray(v) && !v.length)
+const heldOf = (s, f) => (s.held && !isEmpty(s.held[f]) ? s.held[f] : null)
+/** What the box shows: her own value, else what the suppliers list holds. */
+const cur = (s, f) => (!isEmpty(s[f]) ? s[f] : heldOf(s, f))
+/** Her ticks, with any way the suppliers list already holds (Online from her own note, say) ticked too. */
+function shownWays(s) {
+  const held = heldOf(s, 'order_by') || []
+  return ORDER_WAYS.filter((w) => s.order_by.includes(w) || held.includes(w))
+}
+const heldTag = '<span class="tag was" title="Already in the Badger system">Suggested</span>'
+const heldShown = (s, f) => (f === 'order_by' ? shownWays(s).length > s.order_by.length : isEmpty(s[f]) && heldOf(s, f) !== null)
+const tagFor = (s, f) => (heldShown(s, f) ? heldTag : f === 'order_by' ? sugTag(s, f) : '')
+const isDayLead = (v) => v !== null && v !== undefined && DAY_LEADS.includes(String(v))
+
+function extraHtml(s) {
+  const ways = shownWays(s)
+  const lead = cur(s, 'lead_hours')
+  const days = cur(s, 'delivery_days') || []
+  const pay = cur(s, 'pay_how')
+  const pick = (f, list, now) => `<div class="picks" role="group">${list.map(([v, w]) => `<button type="button" class="pick${String(now ?? '') === v ? ' on' : ''}" data-act="pick" data-pf="${f}" data-v="${v}" aria-pressed="${String(now ?? '') === v}"${ro()}>${esc(w)}</button>`).join('')}</div>`
+  const time = (f, label) => `<div class="field">
+      <div class="lbl-row"><label for="${fid(s, f)}">${label}</label>${tagFor(s, f)}</div>
+      <input id="${fid(s, f)}" data-f="${f}" type="time" step="900" value="${esc(cur(s, f) || '')}"${ro()}>
+    </div>`
+  const text = (f, label, max, ph) => `<div class="field">
+      <div class="lbl-row"><label for="${fid(s, f)}">${label}</label>${tagFor(s, f)}</div>
+      <input id="${fid(s, f)}" data-f="${f}" type="text" maxlength="${max}" autocomplete="off" placeholder="${esc(ph)}" value="${esc(cur(s, f) || '')}"${ro()}>
+    </div>`
+  return `<div class="extra">
+    <p class="x-title">Ordering, deliveries and paying</p>
+    <p class="x-head">Ordering</p>
+    <div class="field">
+      <div class="lbl-row"><span class="lab">How do they take orders?</span>${tagFor(s, 'order_by')}</div>
+      <div class="ways">${ORDER_WAYS.map((w) => `<label class="way${ways.includes(w) ? ' on' : ''}"><input type="checkbox" data-f="order_by" value="${w}"${ways.includes(w) ? ' checked' : ''}${ro()}>${ORDER_WORDS[w]}</label>`).join('')}</div>
+      <div class="hints">${orderHints(s)}</div>
+    </div>
+    <div class="field">
+      <div class="lbl-row"><span class="lab">Order lead time</span>${tagFor(s, 'lead_hours')}</div>
+      ${pick('lead_hours', LEAD_TIMES, lead)}
+      <p class="x-hint">How long before a delivery the order must be in. Days are working days, Monday to Friday.</p>
+    </div>
+    <div class="cut"${isDayLead(lead) ? '' : ' hidden'}>${time('order_cutoff', 'Order before (time of day)')}</div>
+    <p class="x-head">Deliveries</p>
+    <div class="field">
+      <div class="lbl-row"><span class="lab">Delivery days</span>${tagFor(s, 'delivery_days')}</div>
+      <div class="days">${DAYS.map(([d, w]) => `<label class="day${days.includes(d) ? ' on' : ''}"><input type="checkbox" data-f="delivery_days" value="${d}"${days.includes(d) ? ' checked' : ''}${ro()}>${w}</label>`).join('')}</div>
+    </div>
+    <div class="pair">${time('delivery_from', 'Delivers from')}${time('delivery_to', 'Delivers until')}</div>
+    <p class="x-head">Paying</p>
+    <div class="field">
+      <div class="lbl-row"><span class="lab">How we pay them</span>${tagFor(s, 'pay_how')}</div>
+      ${pick('pay_how', PAY_HOW, pay)}
+    </div>
+    ${text('account_number', 'Our account number with them', 60, 'If you have one')}
+    ${text('terms', 'Payment terms', 200, '30 days from statement')}
+  </div>`
+}
+
 function cardClass(s) {
   return ['card', 'sup', isChecked(s) && s.same !== true ? 'done' : '', s.still_used === false ? 'unused' : '', s.same === true ? 'merged-card' : ''].filter(Boolean).join(' ')
 }
@@ -234,6 +293,7 @@ function cardHtml(s) {
       <p class="need-msg" hidden></p></div>
     ${summaryHtml(s)}
     ${fieldsHtml(s)}
+    ${extraHtml(s)}
     <div class="foot-row">${S.canEdit ? (isChecked(s)
       ? '<span class="done-line">Checked.</span><button type="button" class="btn ghost" data-act="edit">Change</button>'
       : '<button type="button" class="btn good" data-act="confirm">Looks right</button>') : ''}</div>
@@ -292,7 +352,17 @@ function onField(e, final) {
     s.order_by = validate('order_by', v).value
     for (const w of holder.querySelectorAll('.way')) w.classList.toggle('on', w.querySelector('input').checked)
     holder.querySelector('.hints').innerHTML = orderHints(s)
+    dropTag(el)
     save(s.id, 'order_by', s.order_by)
+    return
+  }
+  if (f === 'delivery_days') {
+    if (!final) return
+    const v = [...holder.querySelectorAll('input[data-f="delivery_days"]')].filter((x) => x.checked).map((x) => x.value)
+    s.delivery_days = validate('delivery_days', v).value
+    for (const d of holder.querySelectorAll('.day')) d.classList.toggle('on', d.querySelector('input').checked)
+    dropTag(el)
+    save(s.id, 'delivery_days', s.delivery_days)
     return
   }
   if (f === 'wa_same') {
@@ -313,8 +383,16 @@ function onField(e, final) {
     bad(el, v.problem, !final && !el.classList.contains('bad'))
     return
   }
+  // the one window rule, against the other time as shown (shared/supplierchoices.js)
+  if ((f === 'delivery_from' && !windowOk(v.value, cur(s, 'delivery_to'))) || (f === 'delivery_to' && !windowOk(cur(s, 'delivery_from'), v.value))) {
+    forget(s.id, f)
+    bad(el, WINDOW_PROBLEM, !final && !el.classList.contains('bad'))
+    return
+  }
   good(el)
+  if (f === 'delivery_from' || f === 'delivery_to') for (const o of holder.querySelectorAll('input[data-f="delivery_from"], input[data-f="delivery_to"]')) if (o !== el) good(o)
   if (f === 'name') holder.querySelector('.nm').textContent = v.value || s.name
+  if (final && ['order_cutoff', 'delivery_from', 'delivery_to', 'account_number', 'terms'].includes(f)) dropTag(el)
   s[f] = v.value
   if (final) {
     // tidy what she typed (an email in small letters), and drop the Suggested mark if it no longer is
@@ -324,6 +402,37 @@ function onField(e, final) {
   }
   if (['email', 'phone', 'whatsapp'].includes(f)) holder.querySelector('.hints').innerHTML = orderHints(s)
   save(s.id, f, v.value, final ? 0 : 900)
+}
+
+// her own value now: the Suggested mark for a value from the suppliers list goes
+function dropTag(el) {
+  const tag = el.closest('.field') && el.closest('.field').querySelector('.tag.was[title="Already in the Badger system"]')
+  if (tag) tag.remove()
+}
+// a lead time or a way of paying: one tap picks it, a tap on her own pick clears it
+function onPick(holder, s, b) {
+  const f = b.dataset.pf
+  const tapped = f === 'lead_hours' ? Number(b.dataset.v) : b.dataset.v
+  const v = s[f] === tapped ? null : tapped
+  s[f] = v
+  const now = cur(s, f)
+  for (const x of holder.querySelectorAll(`.pick[data-pf="${f}"]`)) {
+    const on = String(now ?? '') === x.dataset.v
+    x.classList.toggle('on', on)
+    x.setAttribute('aria-pressed', String(on))
+  }
+  dropTag(b)
+  save(s.id, f, v)
+  if (f === 'lead_hours') {
+    const cut = holder.querySelector('.cut')
+    cut.hidden = !isDayLead(now)
+    // an "order before" time only belongs to a lead time in whole days (the admin clears it the same way)
+    if (cut.hidden && !isEmpty(s.order_cutoff)) {
+      s.order_cutoff = null
+      cut.querySelector('input').value = cur(s, 'order_cutoff') || ''
+      save(s.id, 'order_cutoff', null)
+    }
+  }
 }
 
 function wire() {
@@ -340,7 +449,9 @@ function wire() {
     const s = holder && S.byId.get(holder.dataset.id)
     if (!s) return
     const act = b.dataset.act
-    if (act === 'used') {
+    if (act === 'pick') {
+      onPick(holder, s, b)
+    } else if (act === 'used') {
       const v = b.dataset.v === 'true'
       if (s.confirmed && s.still_used === v) return // a checked supplier keeps a Yes or No
       s.still_used = s.still_used === v ? null : v
@@ -413,7 +524,9 @@ async function addSupplier() {
   let r
   try { r = await call({ action: 'add', name }) } catch { r = { status: 0, body: {} } }
   if (r.status !== 200) { status('bad', `Not added: ${r.body.problem || 'please try again.'}`); return }
-  const s = { contact: '', email: '', phone: '', whatsapp: '', wa_same: false, order_by: [], still_used: true, notes: '', confirmed: false, same: null, seed: {}, ...r.body.supplier, grp: 'new' }
+  const s = { contact: '', email: '', phone: '', whatsapp: '', wa_same: false, order_by: [], still_used: true, notes: '', confirmed: false, same: null, seed: {},
+    lead_hours: null, order_cutoff: null, delivery_days: [], delivery_from: null, delivery_to: null, pay_how: null, account_number: '', terms: '', held: null,
+    ...r.body.supplier, grp: 'new' }
   S.suppliers.push(s)
   S.byId.set(s.id, s)
   $('#addName').value = ''
@@ -439,11 +552,16 @@ async function addSupplier() {
 
 // ---------------------------------------------------------------- Tarryn's view: every change
 
-const FIELD_WORDS = { name: 'name', contact: 'contact person', email: 'email', phone: 'phone', whatsapp: 'WhatsApp', wa_same: 'WhatsApp same as phone', order_by: 'how they take orders', still_used: 'still used', notes: 'notes', confirmed: 'Looks right', same: 'same supplier as', anything_else: 'anything else', added: 'added a supplier' }
+const FIELD_WORDS = { name: 'name', contact: 'contact person', email: 'email', phone: 'phone', whatsapp: 'WhatsApp', wa_same: 'WhatsApp same as phone', order_by: 'how they take orders', still_used: 'still used', notes: 'notes', confirmed: 'Looks right', same: 'same supplier as', anything_else: 'anything else', added: 'added a supplier',
+  lead_hours: 'order lead time', order_cutoff: 'order before', delivery_days: 'delivery days', delivery_from: 'delivers from', delivery_to: 'delivers until', pay_how: 'how we pay them', account_number: 'our account number', terms: 'payment terms' }
+const words = (list, v) => (list.find(([k]) => k === String(v)) || [null, String(v)])[1]
 function said(c, v) {
   if (v === null || v === undefined || v === '') return '<i>empty</i>'
   if (c.field === 'order_by') return v.length ? esc(v.map((w) => ORDER_WORDS[w] || w).join(', ')) : '<i>none ticked</i>'
   if (c.field === 'wa_same') return v ? 'ticked' : 'not ticked'
+  if (c.field === 'lead_hours') return esc(words(LEAD_TIMES, v))
+  if (c.field === 'pay_how') return esc(words(PAY_HOW, v))
+  if (c.field === 'delivery_days') return v.length ? esc(v.map((d) => words(DAYS, d)).join(', ')) : '<i>none ticked</i>'
   if (c.field === 'phone' || c.field === 'whatsapp') return esc(showPhone(v))
   if (c.field === 'confirmed') return v ? 'checked' : 'not checked'
   if (c.field === 'still_used') return v ? 'Yes' : 'No'
@@ -489,7 +607,8 @@ async function start() {
   }
   S.canEdit = d.canEdit
   S.who = d.who
-  S.suppliers = d.suppliers.map((s) => ({ ...s, order_by: Array.isArray(s.order_by) ? s.order_by : [], seed: s.seed || {} }))
+  S.suppliers = d.suppliers.map((s) => ({ ...s, order_by: Array.isArray(s.order_by) ? s.order_by : [], seed: s.seed || {},
+    delivery_days: Array.isArray(s.delivery_days) ? s.delivery_days : [], account_number: s.account_number || '', terms: s.terms || '' }))
   S.byId = new Map(S.suppliers.map((x) => [x.id, x]))
   $('#anythingElse').value = d.notes || ''
   $('#anything').hidden = false

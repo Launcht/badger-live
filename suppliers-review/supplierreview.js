@@ -6,15 +6,24 @@
  *
  * Brief: clients/wild-mongoo/badger/spec/2026-11-17-suppliers-review/01-brief-supplier-review-page.md
  *
- * No imports, no Node or Deno features: it must run in a browser, in Deno and in Node unchanged.
+ * One import only, shared/supplierchoices.js (itself import-free), copied beside this file at deploy. No Node or Deno
+ * features: it must run in a browser, in Deno and in Node unchanged.
+ *
+ * Supplier fields on her page (20/11/2026, spec 2026-11-20-supplier-fields/03-build-review-page-fields.md): the same
+ * ticks and picks the admin got that day (how they take orders, lead time, order before, delivery days and window, how we
+ * pay them, our account number, payment terms), from the same lists, with the same checks.
  */
+import { ORDER_WAYS as WAYS, DAYS, LEAD_TIMES, DAY_LEADS, PAY_HOW, ACCOUNT_MAX, TERMS_MAX, timeOf, windowOk, WINDOW_PROBLEM } from './supplierchoices.js'
 
 // ---------------------------------------------------------------- what may be saved
 
-export const FIELDS = new Set(['name', 'contact', 'email', 'phone', 'whatsapp', 'wa_same', 'order_by', 'still_used', 'notes', 'confirmed', 'same', 'anything_else'])
-export const ORDER_WAYS = ['email', 'whatsapp', 'phone']
-export const ORDER_WORDS = { email: 'Email', whatsapp: 'WhatsApp', phone: 'Phone call' }
-const LIMIT = { name: 120, contact: 120, email: 120, notes: 2000, anything_else: 8000 }
+/** The fields added on 20/11/2026, the admin's own (shared/supplierchoices.js). */
+export const NEW_FIELDS = ['lead_hours', 'order_cutoff', 'delivery_days', 'delivery_from', 'delivery_to', 'pay_how', 'account_number', 'terms']
+export const FIELDS = new Set(['name', 'contact', 'email', 'phone', 'whatsapp', 'wa_same', 'order_by', 'still_used', 'notes', 'confirmed', 'same', 'anything_else', ...NEW_FIELDS])
+export const ORDER_WAYS = WAYS.map(([k]) => k)
+export const ORDER_WORDS = Object.fromEntries(WAYS)
+export { DAYS, LEAD_TIMES, DAY_LEADS, PAY_HOW, timeOf, windowOk, WINDOW_PROBLEM }
+const LIMIT = { name: 120, contact: 120, email: 120, notes: 2000, anything_else: 8000, account_number: ACCOUNT_MAX, terms: TERMS_MAX }
 export const ID = /^[a-z0-9-]{1,40}$/
 
 const ok = (value) => ({ ok: true, value })
@@ -42,11 +51,12 @@ export function canonPhone(v) {
   const l = localPhone(v)
   return l && `+27${l.replace(/\s/g, '').slice(1)}`
 }
-export const OWN_DOMAIN = /@wildmongoo\.(com|co\.za)$/i
+// Fix after test 04 (N4): every Wild Mongoo domain, the pet one and any subdomain too.
+export const OWN_DOMAIN = /@([a-z0-9-]+\.)*wildmongoo(pet)?\.(com|co\.za)$/i
 // Addresses of the group (Wild Mongoo's, Badger's, Dotsure's) and of our own companies: never a supplier's email to
 // fill in for her (test 03, finding 1). Found in her Odoo 17/11: wildmongoo.com, dotsure.co.za, badgerholdings.co.za,
 // badgerins.co.za. Only Wild Mongoo's is refused when typed; the others are hers to decide.
-const GROUP = [[/@wildmongoo\.(com|co\.za)$/i, 'Wild Mongoo'], [/@dotsure\.co\.za$/i, 'Dotsure'], [/@badgerholdings\.co\.za$/i, 'Badger Holdings'],
+const GROUP = [[OWN_DOMAIN, 'Wild Mongoo'], [/@dotsure\.co\.za$/i, 'Dotsure'], [/@badgerholdings\.co\.za$/i, 'Badger Holdings'],
   [/@badgerins\.co\.za$/i, 'Badger Insurance'], [/@honeyguide\.co\.za$/i, 'Honeyguide'], [/@kamb\.co\.za$/i, 'Kamb'],
   [/@assayhouse\.co\.za$/i, 'Assay House'], [/@parallaxai\.co\.za$/i, 'ParallaxAi'], [/@launcht\.co\.za$/i, 'LAUNCHT']]
 export function groupOf(email) {
@@ -104,8 +114,37 @@ export function validate(field, value) {
     case 'same':
       return yesNo(value)
     case 'order_by': {
-      if (!Array.isArray(value) || value.some((x) => !ORDER_WAYS.includes(x))) return no('Tick Email, WhatsApp or Phone call.')
+      if (!Array.isArray(value) || value.some((x) => !ORDER_WAYS.includes(x))) return no('tick from the list: Email, WhatsApp, Phone call, Online or In person.')
       return ok(ORDER_WAYS.filter((w) => value.includes(w)))
+    }
+    // the fields added on 20/11/2026: the admin's lists and checks (shared/supplierchoices.js); empty is always allowed
+    case 'lead_hours': {
+      if (value === null || value === undefined || value === '') return ok(null)
+      const v = String(value).trim()
+      if (!LEAD_TIMES.some(([k]) => k === v)) return no('choose the order lead time from the list.')
+      return ok(Number(v))
+    }
+    case 'order_cutoff':
+    case 'delivery_from':
+    case 'delivery_to': {
+      if (value === null || value === undefined || (typeof value === 'string' && !value.trim())) return ok(null)
+      const t = typeof value === 'string' ? timeOf(value) : null
+      if (!t) return no('enter a time of day, such as 08:00.')
+      return ok(t)
+    }
+    case 'delivery_days': {
+      if (!Array.isArray(value) || value.some((x) => !DAYS.some(([k]) => k === x))) return no('tick the days from the list.')
+      return ok(DAYS.map(([k]) => k).filter((k) => value.includes(k)))
+    }
+    case 'pay_how': {
+      if (value === null || value === undefined || value === '') return ok(null)
+      if (!PAY_HOW.some(([k]) => k === value)) return no('choose how you pay them from the list.')
+      return ok(value)
+    }
+    case 'account_number':
+    case 'terms': {
+      const t = freeText(value, LIMIT[field])
+      return t.ok ? ok(t.value.trim().replace(/\s+/g, ' ')) : t
     }
     case 'notes': return freeText(value, LIMIT.notes)
     case 'anything_else': return freeText(value, LIMIT.anything_else)
@@ -190,6 +229,7 @@ export async function handle(req, store) {
     if (r.missing) return reply(404, { problem: 'That supplier could not be found.' })
     if (r.noAsk) return reply(400, { problem: 'There is nothing to merge this supplier with.' })
     if (r.needsUsed) return reply(400, { problem: 'tap Yes or No on Still used first.' })
+    if (r.badWindow) return reply(400, { problem: WINDOW_PROBLEM })
     return reply(200, { at: r.at, changed: r.changed, value: v.value })
   }
   if (req.action === 'add') {
@@ -199,6 +239,7 @@ export async function handle(req, store) {
       id: `new-${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`.slice(0, 40), sort: 9000,
       name: name.value, contact: '', email: '', phone: '', whatsapp: '', wa_same: false, order_by: [], still_used: true,
       notes: '', confirmed: false, same: null, source: 'new', seed: {},
+      lead_hours: null, order_cutoff: null, delivery_days: [], delivery_from: null, delivery_to: null, pay_how: null, account_number: '', terms: '',
     }
     const saved = await store.add(row, me.who)
     return reply(200, { supplier: saved })
@@ -227,6 +268,8 @@ export function memoryStore({ keys, suppliers, notes = '' }) {
       if (field === 'same' && value !== null && !(r.seed && r.seed.ask)) return { noAsk: true }
       if (field === 'confirmed' && value === true && confirmProblem(r)) return { needsUsed: true }
       if (field === 'still_used' && value === null && r.confirmed) return { needsUsed: true }
+      if (field === 'delivery_from' && !windowOk(value, r.delivery_to)) return { badWindow: true }
+      if (field === 'delivery_to' && !windowOk(r.delivery_from, value)) return { badWindow: true }
       if (same(r[field], value)) return { at, changed: false }
       s.changes.push({ at, who, supplier: id, name: r.name, field, before: r[field] ?? null, after: value })
       r[field] = value
