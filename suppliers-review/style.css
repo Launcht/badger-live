@@ -308,7 +308,8 @@ body.view .foot-row .btn { display: none; }
 .x-head { margin: 12px 0 0; font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--mid); }
 .extra .field { margin: 8px 0 10px; }
 .x-hint { margin: 6px 0 0; font-size: 12px; color: var(--mid); }
-.extra .ways { grid-template-columns: repeat(3, 1fr); }
+.extra .ways { display: flex; flex-wrap: wrap; }
+.extra .way { flex: 1 1 auto; padding: 4px 12px; white-space: nowrap; }
 .picks { display: flex; flex-wrap: wrap; gap: 6px; }
 .pick { min-height: 44px; padding: 0 12px; border-radius: 22px; border: 1.5px solid var(--line); background: #fff; font-weight: 600; font-size: 14px; cursor: pointer; }
 .pick.on { background: var(--good); border-color: var(--good); color: #fff; }
@@ -323,6 +324,6 @@ input[type=time] { width: 100%; min-height: 44px; border: 1px solid #d9cfc4; bor
 .note.new { border-color: var(--good); }
 @media (min-width: 700px) {
   .extra { margin-left: 16px; margin-right: 16px; padding: 12px 16px 6px; }
-  .extra .ways { grid-template-columns: repeat(5, 1fr); }
+  .extra .way { flex: 1 1 0; }
   .pair { max-width: 420px; }
 }
