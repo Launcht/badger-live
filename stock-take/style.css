@@ -145,3 +145,17 @@ input:disabled, select:disabled { background: var(--wash); color: var(--ink); op
   .add-row .a-name { grid-column: auto; }
   .sum { grid-template-columns: repeat(5, 1fr); }
 }
+
+/* fixes after the independent test (20/11/2026) */
+.status.note { color: var(--amber); font-weight: 600; }
+.rb { flex-basis: 100%; font-size: 13px; color: var(--slate); min-height: 0; margin-top: 2px; text-align: center; }
+.rb:empty { display: none; }
+.askc { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; font-size: 14px; }
+.cbox { flex-basis: 150px; }
+.upd { margin: 6px 0 0; font-size: 13px; font-weight: 600; color: var(--amber); }
+.hist > summary { min-height: 52px; display: flex; align-items: center; gap: 8px; cursor: pointer; list-style: none; }
+.hist > summary::-webkit-details-marker { display: none; }
+.hist > summary::after { content: 'Show'; margin-left: auto; font-size: 13px; color: var(--mid); }
+.hist[open] > summary::after { content: 'Hide'; }
+.hist .h2 { font-family: Cinzel, Georgia, serif; font-size: 21px; }
+@media (min-width: 700px) { .upd { grid-column: 2; } }

@@ -6,14 +6,20 @@
  *
  * Blank is NOT COUNTED. Nothing on this page ever turns a blank into a 0; only "None (0)" or a typed 0 does.
  * A value waiting to be saved is also kept in this browser, so a refresh or a dropped connection loses nothing.
+ *
+ * Fixes after the independent test (02-test-report.md, 20/11/2026): every save says what this screen last knew (N-1),
+ * so an older screen never overwrites a newer value; a top add keeps its place (N-2); a count that could be read two
+ * ways is asked about, and what was typed is read back under the box (N-3); open screens pick up other screens'
+ * changes every 25 seconds without touching what is being typed (N-4); Tarryn's history is folded (N-7).
  */
-import { validate, parseCount, unitsFor, ALL_UNITS, summary, shelfProgress, OTHER_SHELF, GONE_REASONS } from './stocktake.js'
+import { validate, parseCount, readBack, unitsFor, ALL_UNITS, summary, shelfProgress, OTHER_SHELF, GONE_REASONS, ITEM_FIELDS, SHEET_FIELDS } from './stocktake.js'
 
 const API = 'https://nptyrtjdvqglgwkaepce.supabase.co/functions/v1/badger-stocktake'
 const key = new URLSearchParams(location.hash.slice(1)).get('k') || ''
 const PENDING = 'badger-stocktake-pending'
 
-const S = { items: [], byId: new Map(), shelves: [], canEdit: false, who: '', q: '', todo: false, openBefore: null }
+const S = { items: [], byId: new Map(), shelves: [], sheet: {}, canEdit: false, who: '', q: '', todo: false, openBefore: null }
+const POLL_MS = 25000
 const $ = (s, el = document) => el.querySelector(s)
 const $$ = (s, el = document) => [...el.querySelectorAll(s)]
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
@@ -31,18 +37,27 @@ async function call(body) {
   return { status: r.status, body: j }
 }
 
-const queue = new Map() // `${item}|${field}` -> the value waiting to be saved
+// N-1: `known` is each field's value as the server last told this screen. Every save sends it as `base`; the server
+// refuses (409) when the field holds something newer, and says what. Waiting values carry their own base.
+const known = new Map() // `${item}|${field}` -> the server's value, as this screen last knew it
+const queue = new Map() // `${item}|${field}` -> { v, base, t }: waiting to be saved
 const timers = new Map()
 let busy = false
 let lastProblem = ''
 const invalid = new Map() // element -> problem: while any is left, the bar never says "Saved"
+const same = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null)
 
-function keep() {
-  try {
-    if (queue.size) localStorage.setItem(PENDING, JSON.stringify(Object.fromEntries(queue)))
-    else localStorage.removeItem(PENDING)
-  } catch { /* private browsing: the server copy is still the one that counts */ }
+// The browser's copy of what is waiting, shared by every tab of this page: each tab adds and takes off only its own
+// lines (test N-1: one tab used to replace another's list).
+function lsRead() {
+  try { const o = JSON.parse(localStorage.getItem(PENDING) || '{}'); return o && typeof o === 'object' && !Array.isArray(o) ? o : {} } catch { return {} }
 }
+function lsWrite(o) {
+  try { if (Object.keys(o).length) localStorage.setItem(PENDING, JSON.stringify(o)); else localStorage.removeItem(PENDING) } catch { /* private browsing: the server copy counts */ }
+}
+function lsPut(k, e) { const o = lsRead(); o[k] = e; lsWrite(o) }
+function lsDone(k, v) { const o = lsRead(); if (o[k] && same(o[k].v, v)) { delete o[k]; lsWrite(o) } }
+
 function status(kind, text) {
   const el = $('#status')
   el.className = `status ${kind}`
@@ -77,9 +92,21 @@ function good(el) {
 }
 function save(id, field, value, wait = 0) {
   const k = `${id ?? ''}|${field}`
-  queue.set(k, value)
-  keep()
+  const q = queue.get(k)
+  const base = q ? q.base : (known.has(k) ? known.get(k) : null)
   clearTimeout(timers.get(k))
+  // N-1: nothing new (leaving a box that was not changed, or changed back) sends nothing
+  if (same(value, base)) {
+    if (q) { queue.delete(k); lsDone(k, q.v) }
+    showProblems()
+    return
+  }
+  const e = { v: value, base, t: Date.now() }
+  queue.set(k, e)
+  lsPut(k, e)
+  const row = id && document.getElementById(`i-${id}`)
+  const upd = row && row.querySelector('.upd')
+  if (upd) upd.remove()
   if (!invalid.size) status('saving', 'Saving...')
   timers.set(k, setTimeout(flush, wait))
 }
@@ -88,30 +115,48 @@ async function flush() {
   busy = true
   try {
     while (queue.size) {
-      const [k, value] = queue.entries().next().value
+      const [k, e] = queue.entries().next().value
       queue.delete(k)
       const [id, field] = k.split('|')
       let r
       try {
-        r = await call({ action: 'save', item: id || null, field, value })
+        r = await call({ action: 'save', item: id || null, field, value: e.v, base: e.base })
       } catch {
         r = { status: 0, body: {} }
       }
       if (r.status === 0 || r.status >= 500) {
-        if (!queue.has(k)) queue.set(k, value)
-        keep()
+        if (!queue.has(k)) queue.set(k, e)
         status('bad', 'Not saved yet: no connection. Trying again...')
         busy = false
         setTimeout(flush, 4000)
         return
       }
-      keep()
-      if (r.status === 200) { lastProblem = ''; continue }
+      lsDone(k, e.v)
+      if (r.status === 200) {
+        lastProblem = ''
+        const now = 'value' in r.body ? r.body.value : e.v
+        known.set(k, now)
+        // typed again while this was on its way: that next save starts from what was just saved
+        const next = queue.get(k)
+        if (next) { next.base = now; lsPut(k, next) }
+        continue
+      }
+      if (r.status === 409 && r.body.stale) {
+        // N-1: another screen saved something newer; show it, say so, and drop what this screen had for that field
+        known.set(k, r.body.current ?? null)
+        const next = queue.get(k)
+        if (next) { queue.delete(k); lsDone(k, next.v) }
+        applyField(id || null, field, r.body.current ?? null, true)
+        const it = id && S.byId.get(id)
+        lastProblem = ''
+        status('note', `Updated on another screen${it ? `: ${it.name}` : ''}`)
+        continue
+      }
       lastProblem = r.body.problem || 'That could not be saved.'
       status('bad', `Not saved: ${lastProblem}`)
     }
     if (invalid.size) showProblems()
-    else if (!lastProblem) status('ok', `Saved ${hhmm()}`)
+    else if (!lastProblem && !/^Updated/.test($('#status').textContent)) status('ok', `Saved ${hhmm()}`)
   } finally {
     busy = false
   }
@@ -151,7 +196,8 @@ function itemHtml(it) {
   return `<div class="it ${stateOf(it)}" id="i-${esc(it.id)}" data-id="${esc(it.id)}">
     ${nameHtml(it)}
     <div class="it-count">
-      <div class="cbox"><input class="cnt" type="text" inputmode="decimal" enterkeyhint="next" data-f="count" value="${esc(num(it.count))}" placeholder="Count" aria-label="Count for ${esc(it.name)}" autocomplete="off"${ro()}></div>
+      <div class="cbox"><input class="cnt" type="text" inputmode="decimal" enterkeyhint="next" data-f="count" value="${esc(num(it.count))}" placeholder="Count" aria-label="Count for ${esc(it.name)}" autocomplete="off"${ro()}>
+        <div class="rb" aria-live="polite"></div><div class="askc" hidden></div></div>
       <button type="button" class="zero${it.count === 0 ? ' on' : ''}" data-act="zero" aria-pressed="${it.count === 0}"${ro()}>None (0)</button>
     </div>
     ${unitsHtml(it)}
@@ -307,6 +353,91 @@ function moveRow(it) {
   refresh(it)
 }
 
+// ---------------------------------------------------------------- what other screens changed (N-1, N-4)
+
+/** Remember what the server holds for every field of a line. */
+function learn(it) {
+  for (const f of ITEM_FIELDS) known.set(`${it.id}|${f}`, it[f] ?? null)
+}
+const focusedField = (row) => (row && row.contains(document.activeElement) ? document.activeElement.dataset.f || '' : '')
+
+/** One field changed by another screen: shown, without touching a box that is being typed in (unless `force`). */
+function applyField(id, field, value, force = false) {
+  if (!id) {
+    S.sheet[field] = value
+    const el = $(`[data-sheet="${field}"]`)
+    if (el && (force || el !== document.activeElement)) { el.value = value ?? ''; good(el) }
+    return
+  }
+  const it = S.byId.get(id)
+  if (!it) return
+  it[field] = value
+  if (field === 'gone') { moveRow(it); applyFilter(); return }
+  const row = document.getElementById(`i-${id}`)
+  if (!row) return
+  if (it.gone) { row.outerHTML = removedHtml(it); refresh(it); return }
+  const busyF = force ? '' : focusedField(row)
+  if (field === 'count' && busyF !== 'count') {
+    const inp = row.querySelector('.cnt')
+    inp.value = num(value)
+    good(inp)
+    row.querySelector('.rb').textContent = ''
+    row.querySelector('.askc').hidden = true
+    row.classList.remove('s-blank', 's-zero', 's-counted')
+    row.classList.add(stateOf(it))
+    const z = row.querySelector('.zero')
+    z.classList.toggle('on', value === 0)
+    z.setAttribute('aria-pressed', String(value === 0))
+  } else if (field === 'unit' && busyF !== 'unit') {
+    row.querySelector('.units').outerHTML = unitsHtml(it)
+  } else if (field === 'note' && busyF !== 'note') {
+    const nt = row.querySelector('.nt')
+    nt.value = value || ''
+    good(nt)
+  } else if (field === 'name' && busyF !== 'name') {
+    row.querySelector('.it-name').outerHTML = nameHtml(it)
+  }
+  if (force && !row.querySelector('.upd')) row.insertAdjacentHTML('beforeend', '<p class="upd">Updated on another screen</p>')
+  refresh(it)
+}
+
+/** N-4: every 25 seconds, what other screens saved. A field waiting to save here, or being typed in, is left alone. */
+async function look() {
+  if (document.hidden || busy || queue.size) return
+  let r
+  try { r = await call({ action: 'open' }) } catch { return }
+  if (r.status !== 200 || busy || queue.size) return
+  for (const raw of r.body.items) {
+    const s = { ...raw, count: raw.count === null || raw.count === undefined ? null : Number(raw.count), unit: raw.unit || '', note: raw.note || '' }
+    const it = S.byId.get(s.id)
+    if (!it) {
+      // a line added on another screen
+      S.items.push(s)
+      S.byId.set(s.id, s)
+      learn(s)
+      moveRow(s)
+      continue
+    }
+    const row = document.getElementById(`i-${s.id}`)
+    for (const f of ITEM_FIELDS) {
+      const k = `${s.id}|${f}`
+      if (queue.has(k) || same(s[f], known.get(k))) continue
+      if (focusedField(row) === f) continue // she is typing here: her save will be checked against the server
+      known.set(k, s[f] ?? null)
+      if (!same(it[f], s[f])) applyField(s.id, f, s[f] ?? null)
+    }
+  }
+  for (const f of SHEET_FIELDS) {
+    const k = `|${f}`
+    const v = (r.body.sheet || {})[f] ?? null
+    if (queue.has(k) || same(v, known.get(k)) || $(`[data-sheet="${f}"]`) === document.activeElement) continue
+    known.set(k, v)
+    applyField(null, f, v)
+  }
+  if (!S.canEdit) renderChanges(r.body.changes || [])
+  applyFilter()
+}
+
 function onInput(e, final) {
   if (!S.canEdit) return
   const el = e.target
@@ -322,9 +453,20 @@ function onInput(e, final) {
   const f = el.dataset.f
   if (f === 'count') {
     const v = parseCount(el.value)
-    if (!v.ok) return bad(el, v.problem)
+    row.querySelector('.rb').textContent = v.ok ? readBack(el.value) : ''
+    const askc = row.querySelector('.askc')
+    if (!v.ok) { askc.hidden = true; return bad(el, v.problem) }
+    if (v.ask) {
+      // N-3: 1,500 could be 1.5 or 1500. Nothing is saved until she picks.
+      bad(el, `did you mean ${v.ask[0]} or ${v.ask[1]}?`)
+      askc.innerHTML = `<span>Did you mean</span>${v.ask.map((n) => `<button type="button" class="u" data-act="pick" data-v="${n}">${n}</button>`).join('<span>or</span>')}`
+      askc.hidden = false
+      return
+    }
+    askc.hidden = true
     good(el)
-    if (v.value !== it.count || final) setCount(it, row, v.value, final ? 0 : 700)
+    if (v.value !== it.count) setCount(it, row, v.value, final ? 0 : 700)
+    else if (final) save(it.id, 'count', v.value, 0)
   } else if (f === 'unit') {
     const v = validate('unit', el.value)
     if (!v.ok) return bad(el, v.problem)
@@ -395,6 +537,7 @@ async function addItem(box) {
   good(nameEl)
   const count = parseCount(cntEl.value)
   if (!count.ok) { bad(cntEl, count.problem); cntEl.focus(); return }
+  if (count.ask) { bad(cntEl, `type ${count.ask[0]} or ${count.ask[1]}, so it cannot be read the wrong way.`); cntEl.focus(); return }
   good(cntEl)
   const unit = validate('unit', unitEl.value)
   if (!unit.ok) { bad(unitEl, unit.problem); return }
@@ -402,11 +545,12 @@ async function addItem(box) {
   if (!note.ok) { bad(noteEl, note.problem); return }
   status('saving', 'Adding...')
   let r
-  try { r = await call({ action: 'add', shelf, name: name.value, count: count.value, unit: unit.value, note: note.value }) } catch { r = { status: 0, body: {} } }
+  try { r = await call({ action: 'add', shelf, where: box.dataset.where, name: name.value, count: count.value, unit: unit.value, note: note.value }) } catch { r = { status: 0, body: {} } }
   if (r.status !== 200) { status('bad', `Not added: ${r.body.problem || 'no connection. Please try again.'}`); return }
   const it = { note: '', gone: false, gone_reason: null, same_as: null, sheet_name: '', comes_as: '', ...r.body.item }
   S.items.push(it)
   S.byId.set(it.id, it)
+  learn(it)
   // added from the top of a shelf, it shows at the top, where she is; from the bottom, at the bottom
   box.closest('.shelf').querySelector(':scope > .items').insertAdjacentHTML(box.dataset.where === 'top' ? 'afterbegin' : 'beforeend', itemHtml(it))
   nameEl.value = ''
@@ -427,6 +571,7 @@ function wire() {
     if (el.classList.contains('cnt') && (e.key === 'Enter' || (e.key === 'Tab' && !e.shiftKey))) {
       e.preventDefault()
       onInput({ target: el }, true)
+      if (!el.closest('.it').querySelector('.askc').hidden) return
       nextCount(el)
     } else if (el.classList.contains('nt') && e.key === 'Enter') {
       e.preventDefault()
@@ -469,10 +614,21 @@ function wire() {
     const row = b.closest('.it')
     const it = row && S.byId.get(row.dataset.id)
     if (!it) return
-    if (act === 'zero') {
+    if (act === 'pick') {
+      const inp = row.querySelector('.cnt')
+      const v = Number(b.dataset.v)
+      inp.value = String(v)
+      row.querySelector('.askc').hidden = true
+      row.querySelector('.rb').textContent = ''
+      good(inp)
+      setCount(it, row, v, 0)
+      inp.focus()
+    } else if (act === 'zero') {
       const v = it.count === 0 ? null : 0
       const inp = row.querySelector('.cnt')
       inp.value = num(v)
+      row.querySelector('.askc').hidden = true
+      row.querySelector('.rb').textContent = ''
       good(inp)
       setCount(it, row, v, 0)
     } else if (act === 'unit') {
@@ -552,18 +708,20 @@ function renderChanges(changes) {
   const el = $('#changes')
   el.hidden = false
   const when = (t) => new Date(t).toLocaleString('en-ZA', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
-  el.innerHTML = `<h2>Every change <span class="n">${changes.length}</span></h2>
+  const was = el.querySelector('details')
+  const open = was ? was.open : false
+  const scroll = was ? (was.querySelector('.clist') || {}).scrollTop || 0 : 0
+  el.innerHTML = `<details class="hist"${open ? ' open' : ''}><summary><span class="h2">Every change</span> <span class="n">${changes.length}</span></summary>
     ${changes.length ? '' : '<p class="small">No changes yet.</p>'}
     <ol class="clist">${changes.map((c) => `<li><div class="c-top"><b>${esc(c.who)}</b> <span class="muted">${when(c.at)}</span></div>
         <div>${c.item ? `<button type="button" class="lnk" data-go="${esc(c.item)}">${esc(c.name || c.item)}</button> <span class="muted">${esc(c.shelf || '')}</span>, ` : 'Top of the sheet, '}${esc(FIELD_WORDS[c.field] || c.field)}</div>
-        <p>${c.field === 'added' || c.field === 'gone' ? said(c, c.after) : `${said(c, c.before)} <b>to</b> ${said(c, c.after)}`}</p></li>`).join('')}</ol>`
+        <p>${c.field === 'added' || c.field === 'gone' ? said(c, c.after) : `${said(c, c.before)} <b>to</b> ${said(c, c.after)}`}</p></li>`).join('')}</ol></details>`
+  const list = el.querySelector('.clist')
+  if (list) list.scrollTop = scroll
 }
 
 // ---------------------------------------------------------------- start
 
-function pendingFromBrowser() {
-  try { return JSON.parse(localStorage.getItem(PENDING) || '{}') } catch { return {} }
-}
 
 async function start() {
   if (!key) {
@@ -590,14 +748,27 @@ async function start() {
   S.items = d.items.map((i) => ({ ...i, count: i.count === null || i.count === undefined ? null : Number(i.count), unit: i.unit || '', note: i.note || '' }))
   S.byId = new Map(S.items.map((x) => [x.id, x]))
   for (const it of S.items) if (!it.added && !S.shelves.includes(it.shelf)) S.shelves.push(it.shelf)
-  const sheet = d.sheet || {}
+  const sheet = { ...(d.sheet || {}) }
+  for (const it of S.items) learn(it)
+  for (const f of SHEET_FIELDS) known.set(`|${f}`, sheet[f] ?? null)
 
-  // anything typed here that had not reached the server yet (a refresh, a dropped connection): put back and saved
-  const waiting = S.canEdit ? pendingFromBrowser() : {}
-  for (const [k, v] of Object.entries(waiting)) {
-    const [id, field] = k.split('|')
-    if (!id) { sheet[field] = v } else { const it = S.byId.get(id); if (it) it[field] = v }
+  // Anything typed here that had not reached the server (a refresh, a dropped connection) goes again with the base it
+  // was typed against, so the server refuses it if another screen changed that field since (N-1). Lines in the old
+  // shape (no base) are dropped: they cannot be checked.
+  const waiting = {}
+  if (S.canEdit) {
+    const o = lsRead()
+    for (const [k, e] of Object.entries(o)) {
+      if (!(e && typeof e === 'object' && 'v' in e && 'base' in e)) { delete o[k]; continue }
+      const [id, field] = k.split('|')
+      if (!(id ? ITEM_FIELDS : SHEET_FIELDS).includes(field) || (id && !S.byId.has(id))) { delete o[k]; continue }
+      waiting[k] = e
+      if (!id) sheet[field] = e.v
+      else S.byId.get(id)[field] = e.v
+    }
+    lsWrite(o)
   }
+  S.sheet = sheet
 
   $('#sDate').value = sheet.date || ''
   $('#sCounted').value = sheet.counted_by || ''
@@ -607,7 +778,7 @@ async function start() {
   $('#summary').hidden = false
   if (!S.canEdit) {
     document.body.classList.add('view')
-    $('#whoLine').textContent = 'Tarryn\'s view: what Lindsay has entered, and every change, newest first. This link can only look.'
+    $('#whoLine').textContent = 'Tarryn\'s view: what Lindsay has entered, and every change, newest first. It updates by itself. This link can only look.'
     for (const el of $$('#sheet input')) el.disabled = true
     renderChanges(d.changes || [])
   }
@@ -620,9 +791,12 @@ async function start() {
   updBar()
   wire()
   status('ok', S.canEdit ? 'Changes save as you go' : 'Read only')
-  for (const [k, v] of Object.entries(waiting)) {
-    const [id, field] = k.split('|')
-    save(id || null, field, v)
+  for (const [k, e] of Object.entries(waiting)) {
+    queue.set(k, e)
+    timers.set(k, setTimeout(flush, 0))
   }
+  if (queue.size) status('saving', 'Saving...')
+  setInterval(look, POLL_MS)
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) look() })
 }
 start()

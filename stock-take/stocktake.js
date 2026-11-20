@@ -33,8 +33,10 @@ const FRACTION = { '½': 0.5, '¼': 0.25, '¾': 0.75, '⅓': 1 / 3, '⅔': 2 / 3
 const round3 = (n) => Math.round(n * 1000) / 1000
 
 /**
- * A count as written on paper: 3, 2.5, 2,5, 1/2, 1 1/2, ½, 2½. Zero or more, at most MAX_COUNT, three decimals kept.
- * Blank (null, empty, spaces) is null: not counted. Anything else is refused with a reason that never repeats it.
+ * A count as written on paper: 3, 2.5, 2,5, 1/2, 1 1/2, ½, 2½, 1 000. Zero or more, at most MAX_COUNT, three decimals
+ * kept. Blank (null, empty, spaces) is null: not counted. Anything else is refused with a reason that never repeats it.
+ * A comma and exactly three digits (1,500) could be 1.5 or 1500 (test N-3): it reads as the decimal, and `ask` holds
+ * both, so the page asks her and the server refuses it as typed. Never read silently.
  */
 export function parseCount(v) {
   if (v === null || v === undefined) return ok(null)
@@ -48,10 +50,22 @@ export function parseCount(v) {
   let m
   if ((m = /^(\d{1,6})?\s*([½¼¾⅓⅔])$/.exec(t))) n = Number(m[1] || 0) + FRACTION[m[2]]
   else if ((m = /^(?:(\d{1,6})\s+)?(\d{1,4})\/(\d{1,4})$/.exec(t))) n = Number(m[3]) ? Number(m[1] || 0) + Number(m[2]) / Number(m[3]) : null
+  else if (/^\d{1,3}( \d{3})+$/.test(t)) n = Number(t.replace(/ /g, ''))
   else if (/^\d{0,6}([.,]\d{1,3})?$/.test(t) && /\d/.test(t)) n = Number(t.replace(',', '.'))
   if (n === null || !Number.isFinite(n) || n < 0 || n > MAX_COUNT) return no(`type a number from 0 to ${MAX_COUNT}, like 3 or 2.5.`)
-  return ok(round3(n))
+  const r = ok(round3(n))
+  if (/^[1-9]\d{0,2},\d{3}$/.test(t)) r.ask = [round3(n), Number(t.replace(',', ''))]
+  return r
 }
+
+/** What a typed count reads as, shown under the box when it is not plainly the number ("2,5" shows "= 2.5"). */
+export function readBack(text) {
+  const t = String(text ?? '').trim()
+  const r = parseCount(t)
+  if (!r.ok || r.value === null || r.ask || String(r.value) === t) return ''
+  return `= ${r.value}`
+}
+const askProblem = (ask) => `say whether you mean ${ask[0]} or ${ask[1]}.`
 
 function words(v, max, need) {
   if (v === null || v === undefined) v = ''
@@ -167,8 +181,8 @@ const same = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null)
 const NOT_RIGHT = 'This link is not right. Ask Tarryn for it again.'
 
 /**
- * One request from the page. store: { who(key), list() -> { items, sheet }, save(id|null, field, value, who) ->
- * { at, changed } | { missing }, add(row, who), history() } (memoryStore below, or the Supabase one in the function).
+ * One request from the page. store: { who(key), list() -> { items, sheet }, save(id|null, field, value, who, base) ->
+ * { at, changed } | { missing } | { stale, current }, add(row, who), history() } (memoryStore below, or the Supabase one in the function).
  * A wrong key is a plain 404 whatever was asked.
  */
 export async function handle(req, store) {
@@ -190,8 +204,15 @@ export async function handle(req, store) {
     if (!FIELDS.has(field)) return reply(400, { problem: 'That cannot be changed here.' })
     const v = validate(field, req.value)
     if (!v.ok) return reply(400, { problem: v.problem })
+    if (v.ask) return reply(400, { problem: askProblem(v.ask) })
+    // test N-1: every save says what the screen last knew (base); an older screen never overwrites a newer value
+    if (!req || !('base' in req)) return reply(400, { problem: 'this page is out of date. Please refresh it.' })
+    const b = field === 'name' && typeof req.base === 'string' ? ok(req.base.trim()) : validate(field, req.base)
+    if (!b.ok) return reply(400, { problem: 'this page is out of date. Please refresh it.' })
+    const stale = (r) => reply(409, { problem: 'Updated on another screen.', stale: true, current: r.current ?? null })
     if (SHEET_FIELDS.includes(field)) {
-      const r = await store.save(null, field, v.value, me.who)
+      const r = await store.save(null, field, v.value, me.who, b.value)
+      if (r.stale) return stale(r)
       return reply(200, { at: r.at, changed: r.changed, value: v.value })
     }
     if (!(typeof req.item === 'string' && ID.test(req.item))) return reply(404, { problem: 'That item could not be found.' })
@@ -200,9 +221,10 @@ export async function handle(req, store) {
       const all = await store.list()
       if (!all.items.some((i) => i.id === v.value)) return reply(400, { problem: 'choose the item it is the same as.' })
     }
-    const r = await store.save(req.item, field, v.value, me.who)
+    const r = await store.save(req.item, field, v.value, me.who, b.value)
     if (r.missing) return reply(404, { problem: 'That item could not be found.' })
     if (r.badSame) return reply(400, { problem: 'choose the item it is the same as.' })
+    if (r.stale) return stale(r)
     return reply(200, { at: r.at, changed: r.changed, value: v.value })
   }
   if (req.action === 'add') {
@@ -210,6 +232,7 @@ export async function handle(req, store) {
     if (!name.ok) return reply(400, { problem: name.problem })
     const count = parseCount(req.count)
     if (!count.ok) return reply(400, { problem: count.problem })
+    if (count.ask) return reply(400, { problem: askProblem(count.ask) })
     const unit = validate('unit', req.unit)
     if (!unit.ok) return reply(400, { problem: unit.problem })
     const note = validate('note', req.note)
@@ -219,8 +242,11 @@ export async function handle(req, store) {
     shelves.add(OTHER_SHELF)
     if (typeof req.shelf !== 'string' || !shelves.has(req.shelf)) return reply(400, { problem: 'choose the shelf it was on.' })
     const shelfSort = req.shelf === OTHER_SHELF ? 99 : (all.items.find((i) => i.shelf === req.shelf) || {}).shelf_sort || 99
+    // test N-2: added from the top of a shelf, it stays at the top after a refresh; from the bottom, at the bottom
+    const sorts = all.items.filter((i) => i.shelf === req.shelf).map((i) => i.sort)
+    const sort = req.where === 'top' ? (sorts.length ? Math.min(...sorts) : 1) - 1 : Math.max(9000, ...sorts.map((x) => x + 1))
     const row = {
-      id: `new-${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`.slice(0, 34), sort: 9000, shelf: req.shelf,
+      id: `new-${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`.slice(0, 34), sort, shelf: req.shelf,
       shelf_sort: shelfSort, name: name.value, sheet_name: '', comes_as: '', on_invoice: null, on_menu: null, count: count.value,
       unit: unit.value, note: note.value, added: true, ours: false, gone: false, gone_reason: null, same_as: null,
     }
@@ -238,10 +264,11 @@ export function memoryStore({ keys, items, sheet = { date: null, counted_by: '',
     changes: [],
     async who(key) { return keys[key] || null },
     async list() { return { items: [...s.items.values()], sheet: { ...s.sheet } } },
-    async save(id, field, value, who) {
+    async save(id, field, value, who, base) {
       const at = new Date().toISOString()
       if (id === null) {
         if (same(s.sheet[field], value)) return { at, changed: false }
+        if (!same(s.sheet[field], base)) return { stale: true, current: s.sheet[field] ?? null }
         s.changes.push({ at, who, item: null, name: null, shelf: null, field, before: s.sheet[field] ?? null, after: value })
         s.sheet[field] = value
         return { at, changed: true }
@@ -249,6 +276,7 @@ export function memoryStore({ keys, items, sheet = { date: null, counted_by: '',
       const r = s.items.get(id)
       if (!r) return { missing: true }
       if (same(r[field], value)) return { at, changed: false }
+      if (!same(r[field], base)) return { stale: true, current: r[field] ?? null }
       s.changes.push({ at, who, item: id, name: r.name, shelf: r.shelf, field, before: r[field] ?? null, after: value })
       r[field] = value
       r.touched_at = at
