@@ -459,8 +459,12 @@ function onInput(e, final) {
     if (v.ask) {
       // N-3: 1,500 could be 1.5 or 1500. Nothing is saved until she picks.
       bad(el, `did you mean ${v.ask[0]} or ${v.ask[1]}?`)
-      askc.innerHTML = `<span>Did you mean</span>${v.ask.map((n) => `<button type="button" class="u" data-act="pick" data-v="${n}">${n}</button>`).join('<span>or</span>')}`
-      askc.hidden = false
+      // drawn once per question: leaving the box to tap an answer must not swap the buttons under her finger
+      if (askc.hidden || askc.dataset.ask !== String(v.ask)) {
+        askc.innerHTML = `<span>Did you mean</span>${v.ask.map((n) => `<button type="button" class="u" data-act="pick" data-v="${n}">${n}</button>`).join('<span>or</span>')}`
+        askc.dataset.ask = String(v.ask)
+        askc.hidden = false
+      }
       return
     }
     askc.hidden = true
