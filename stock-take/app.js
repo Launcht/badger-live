@@ -537,10 +537,10 @@ function wire() {
 
 // ---------------------------------------------------------------- Tarryn's view: every change
 
-const FIELD_WORDS = { count: 'count', unit: 'unit', note: 'note', name: 'renamed', gone: 'removed', gone_reason: 'why removed', same_as: 'same as',
+const FIELD_WORDS = { count: 'count', unit: 'unit', note: 'note', name: 'renamed', gone: 'Remove', gone_reason: 'why removed', same_as: 'same as',
   date: 'date', counted_by: 'counted by', checked_by: 'checked by', added: 'added an item' }
 function said(c, v) {
-  if (c.field === 'gone') return v ? 'removed' : 'back on the list'
+  if (c.field === 'gone') return v ? 'Removed from the list' : 'Undo: back on the list'
   if (v === null || v === undefined || v === '') return c.field === 'count' ? '<i>not counted</i>' : '<i>empty</i>'
   if (c.field === 'gone_reason') return esc(REASON[v] || v)
   if (c.field === 'same_as') return esc((S.byId.get(v) || {}).name || v)
