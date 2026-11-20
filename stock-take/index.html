@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en-ZA">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex, nofollow">
+<title>Stock take - Badger Kitchen</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400&family=Montserrat:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="../icon-192.png">
+</head>
+<body>
+<div class="bar" id="bar">
+  <div class="bar-in">
+    <span class="prog" id="prog">Loading...</span>
+    <span class="status" id="status" aria-live="polite"></span>
+  </div>
+  <div class="bar-in find" id="find" hidden>
+    <input id="search" type="search" placeholder="Find an item" aria-label="Find an item" autocomplete="off" enterkeyhint="go">
+    <button type="button" class="chip" id="todoBtn" aria-pressed="false">Not counted yet</button>
+  </div>
+  <div class="track"><div class="fill" id="fill"></div></div>
+</div>
+
+<main id="main">
+  <header class="top">
+    <img class="mark" src="../brand/badger-holdings-mark.png" alt="" width="44" height="44">
+    <div>
+      <h1>Stock take</h1>
+      <p class="sub" id="whoLine"></p>
+    </div>
+  </header>
+
+  <section class="changes" id="changes" hidden></section>
+
+  <section class="notes" id="notes"></section>
+
+  <section class="sheet" id="sheet" hidden>
+    <div class="sf"><label for="sDate">Date</label><input id="sDate" type="date" data-sheet="date"></div>
+    <div class="sf"><label for="sCounted">Counted by</label><input id="sCounted" type="text" maxlength="60" data-sheet="counted_by" autocomplete="off"></div>
+    <div class="sf"><label for="sChecked">Checked by</label><input id="sChecked" type="text" maxlength="60" data-sheet="checked_by" autocomplete="off"></div>
+  </section>
+
+  <p class="nohit" id="nohit" hidden></p>
+  <div id="list"><p class="loading">Loading...</p></div>
+
+  <section class="summary" id="summary" hidden></section>
+  <p class="foot" id="foot"></p>
+</main>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
