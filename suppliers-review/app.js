@@ -390,7 +390,19 @@ function onField(e, final) {
     return
   }
   good(el)
-  if (f === 'delivery_from' || f === 'delivery_to') for (const o of holder.querySelectorAll('input[data-f="delivery_from"], input[data-f="delivery_to"]')) if (o !== el) good(o)
+  // Fix after test (N1, 20/11/2026): a time this change makes valid in the OTHER box was never sent while it was refused.
+  // Check it on its own and save it now, after this one; if it still cannot be saved, it stays marked "Not saved".
+  let other = null
+  if (f === 'delivery_from' || f === 'delivery_to') {
+    const of = f === 'delivery_from' ? 'delivery_to' : 'delivery_from'
+    const o = holder.querySelector(`input[data-f="${of}"]`)
+    if (o && (invalid.has(o) || o.classList.contains('bad'))) {
+      const ov = validate(of, o.value)
+      const win = of === 'delivery_to' ? windowOk(v.value, ov.value) : windowOk(ov.value, v.value)
+      if (ov.ok && win) other = () => { good(o); s[of] = ov.value; dropTag(o); save(s.id, of, ov.value, final ? 0 : 900) }
+      else if (ov.ok) bad(o, WINDOW_PROBLEM)
+    }
+  }
   if (f === 'name') holder.querySelector('.nm').textContent = v.value || s.name
   if (final && ['order_cutoff', 'delivery_from', 'delivery_to', 'account_number', 'terms'].includes(f)) dropTag(el)
   s[f] = v.value
@@ -402,6 +414,7 @@ function onField(e, final) {
   }
   if (['email', 'phone', 'whatsapp'].includes(f)) holder.querySelector('.hints').innerHTML = orderHints(s)
   save(s.id, f, v.value, final ? 0 : 900)
+  if (other) other()
 }
 
 // her own value now: the Suggested mark for a value from the suppliers list goes

@@ -72,7 +72,7 @@ export function emailOk(v) {
 const freeText = (v, max) => {
   if (v === null || v === undefined) return ok('')
   if (typeof v !== 'string') return no('That could not be read as words.')
-  if (v.length > max) return no(`Keep it under ${max} letters.`)
+  if (v.length > max) return no(`Keep it to ${max} letters or fewer.`)
   return ok(v)
 }
 const yesNo = (v) => (v === null || v === true || v === false ? ok(v) : no('Pick Yes or No.'))
@@ -82,7 +82,7 @@ export function validate(field, value) {
   switch (field) {
     case 'name': {
       if (typeof value !== 'string' || !value.trim()) return no('Every supplier needs a name.')
-      if (value.trim().length > LIMIT.name) return no(`Keep it under ${LIMIT.name} letters.`)
+      if (value.trim().length > LIMIT.name) return no(`Keep it to ${LIMIT.name} letters or fewer.`)
       return ok(value.trim())
     }
     case 'contact': {
