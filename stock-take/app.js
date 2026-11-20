@@ -136,7 +136,8 @@ function unitsHtml(it) {
   return `<div class="units" role="group" aria-label="Unit">${likely.map(chip).join('')}
       <span class="rest"${restOn ? '' : ' hidden'}>${rest.map(chip).join('')}</span>
       ${restOn || !S.canEdit ? '' : '<button type="button" class="u more" data-act="more">More</button>'}
-      <input class="uo" type="text" maxlength="30" data-f="unit" value="${esc(other)}" placeholder="Other unit" aria-label="Other unit for ${esc(it.name)}" autocomplete="off"${ro()}></div>`
+      ${other || !S.canEdit ? '' : '<button type="button" class="u more" data-act="other">Other</button>'}
+      <input class="uo" type="text" maxlength="30" data-f="unit" value="${esc(other)}" placeholder="Type the unit" aria-label="Other unit for ${esc(it.name)}" autocomplete="off"${ro()}${other ? '' : ' hidden'}></div>`
 }
 function nameHtml(it) {
   const renamed = !it.added && it.sheet_name && it.name !== it.sheet_name
@@ -256,7 +257,7 @@ function applyFilter() {
     S.openBefore = null
   }
   $('#nohit').hidden = !filtering || hits > 0
-  $('#nohit').textContent = q ? 'Nothing on the list by that name. If you counted it, add it at the bottom of its shelf.' : 'Every item has a count.'
+  $('#nohit').textContent = q ? 'Nothing on the list by that name. If you counted it, tap + Add an item on its shelf.' : 'Every item has a count.'
   $('#todoBtn').classList.toggle('on', S.todo)
   $('#todoBtn').setAttribute('aria-pressed', String(S.todo))
   updBar()
@@ -478,6 +479,11 @@ function wire() {
       setUnit(it, row, it.unit === b.dataset.u ? '' : b.dataset.u)
       row.querySelector('.uo').value = ''
       good(row.querySelector('.uo'))
+    } else if (act === 'other') {
+      const uo = row.querySelector('.uo')
+      uo.hidden = false
+      b.remove()
+      uo.focus()
     } else if (act === 'more') {
       row.querySelector('.rest').hidden = false
       b.remove()

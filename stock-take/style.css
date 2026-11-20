@@ -55,7 +55,7 @@ input:disabled, select:disabled { background: var(--wash); color: var(--ink); op
 .nohit { margin: 12px 4px; color: var(--slate); }
 .loading { padding: 30px 0; color: var(--slate); }
 
-.shelf { background: var(--card); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); margin: 0 0 10px; overflow: hidden; }
+.shelf { scroll-margin-top: 112px; background: var(--card); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); margin: 0 0 10px; overflow: hidden; }
 .shelf > summary { min-height: 56px; padding: 8px 12px; display: flex; align-items: center; gap: 10px; cursor: pointer; list-style: none; background: var(--card); }
 .shelf > summary::-webkit-details-marker { display: none; }
 .shelf > summary::before { content: '+'; width: 18px; color: var(--mid); font-size: 20px; flex: none; }
