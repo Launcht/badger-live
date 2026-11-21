@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en-ZA">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex, nofollow">
+<title>Recipes and menu - Badger Kitchen</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400&family=Montserrat:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="../icon-192.png">
+</head>
+<body>
+<div class="bar" id="bar">
+  <nav class="bar-in chips" id="chips" aria-label="Sections"></nav>
+  <div class="bar-in find" id="find" hidden>
+    <input id="search" type="search" placeholder="Find a menu item, recipe or stock item" aria-label="Find" autocomplete="off" enterkeyhint="search">
+    <button type="button" class="chip" id="needBtn" aria-pressed="false">Needs you</button>
+  </div>
+</div>
+
+<main id="main">
+  <header class="top">
+    <img class="mark" src="../brand/badger-holdings-mark.png" alt="" width="44" height="44">
+    <div>
+      <h1 id="title">Recipes and menu</h1>
+      <p class="sub" id="whoLine"></p>
+    </div>
+  </header>
+  <div class="total" id="total" hidden><span id="totalText"></span><div class="track"><div class="fill" id="fill"></div></div></div>
+
+  <section class="changes" id="changes" hidden></section>
+  <section class="notes" id="notes"></section>
+
+  <p class="nohit" id="nohit" hidden></p>
+  <div id="list"><p class="loading">Loading...</p></div>
+  <p class="foot" id="foot"></p>
+</main>
+
+<div class="bottom" id="bottom" role="status" aria-live="polite"><span class="status" id="status"></span><button type="button" class="undo" id="undoBtn" hidden>Undo</button></div>
+
+<div class="picker" id="picker" role="dialog" aria-modal="true" aria-labelledby="pkFor" hidden>
+  <div class="pk-head"><span class="pk-for" id="pkFor"></span><button type="button" class="lnk" id="pkClose">Close</button></div>
+  <input id="pkSearch" type="search" placeholder="Type to find..." aria-label="Find in our stock" autocomplete="off" enterkeyhint="search">
+  <div class="pk-list" id="pkList" role="listbox" aria-label="Our stock"></div>
+  <div class="pk-foot" id="pkFoot"></div>
+</div>
+<div class="scrim" id="scrim" hidden></div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
