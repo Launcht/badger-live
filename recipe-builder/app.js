@@ -11,6 +11,7 @@
 import {
   SECTIONS, HEADINGS, MOVE_TO, sectionOf, sectionOfCat, normName, wordsOf, toItemQty, unitWord, parseAmount, readBack,
   lineState, cardStatus, progress, extrasFor, allCorrect, layout, strays, loopReason, fieldValue, setField,
+  saveQueue, openingPlan, rewordMakes, shownAmount, toBase, MAX,
 } from './recipebuilder.js'
 
 const API = 'https://nptyrtjdvqglgwkaepce.supabase.co/functions/v1/badger-recipebuilder'
@@ -49,9 +50,13 @@ async function call(body) {
   try { j = await r.json() } catch { /* nothing to read */ }
   return { status: r.status, body: j }
 }
-const queue = new Map() // `${tbl}|${id}|${field}` -> { tbl, id, field, v, base }
+// Saves (fixes after test, B-3): one entry per field in saveQueue (shared rules). A change made while an earlier save of
+// the same field is on its way, an Undo tapped at once, is sent next from the value that was sent, so it always lands.
+// A refused save puts the saved value back on screen (B-2), so the next save is never "out of date".
+let Q = saveQueue()
 let busy = false
-function lsWrite() { try { if (queue.size) localStorage.setItem(PENDING, JSON.stringify([...queue.values()])); else localStorage.removeItem(PENDING) } catch { /* private browsing */ } }
+let serverFails = 0
+function lsWrite() { try { const p = Q.pending(); if (p.length) localStorage.setItem(PENDING, JSON.stringify(p)); else localStorage.removeItem(PENDING) } catch { /* private browsing */ } }
 function status(kind, text) { const el = $('#status'); el.className = `status ${kind}`; el.textContent = text }
 
 /** One action she takes: every field it changes, saved together, undone together. */
@@ -66,11 +71,7 @@ function act(changes, { undoable = true, label = '' } = {}) {
     if (same(old, c.value)) continue
     back.unshift({ tbl: c.tbl, id: c.id, field: c.field, value: old })
     setField(c.tbl, row, c.field, c.value)
-    const k = `${c.tbl}|${c.id}|${c.field}`
-    const q = queue.get(k)
-    const base = q ? q.base : old
-    if (same(base, c.value)) queue.delete(k)
-    else queue.set(k, { tbl: c.tbl, id: c.id, field: c.field, v: c.value, base })
+    Q.change({ tbl: c.tbl, id: c.id, field: c.field }, old, c.value)
   }
   if (!back.length) return
   lsWrite()
@@ -80,40 +81,49 @@ function act(changes, { undoable = true, label = '' } = {}) {
   setTimeout(flush, 300)
 }
 async function flush() {
-  if (busy || !queue.size) return
+  if (busy || !Q.waiting()) return
   busy = true
-  const batch = [...queue.values()].slice(0, 250)
+  const batch = Q.take()
+  if (!batch.length) { busy = false; return }
+  let again = 50
   try {
     let r
     try { r = await call({ action: 'many', saves: batch.map((e) => ({ tbl: e.tbl, id: e.id, field: e.field, value: e.v, base: e.base })) }) } catch { r = { status: 0, body: {} } }
     if (r.status === 0 || r.status >= 500) {
-      status('bad', 'Not saved: no connection. We will try again.')
-      busy = false
-      setTimeout(flush, 4000)
+      Q.retry(batch)
+      lsWrite()
+      serverFails = r.status ? serverFails + 1 : 0
+      status('bad', serverFails >= 6 ? 'Not saved: something went wrong. Please refresh the page.' : 'Not saved: no connection. We will try again.')
+      again = serverFails >= 6 ? 0 : 4000
       return
     }
-    if (r.status !== 200) { status('bad', `Not saved: ${r.body.problem || 'please refresh the page.'}`); for (const e of batch) queue.delete(`${e.tbl}|${e.id}|${e.field}`); lsWrite(); return }
+    serverFails = 0
     let note = ''
-    for (const res of r.body.results || []) {
-      const k = `${res.tbl}|${res.id}|${res.field}`
-      const sent = batch.find((e) => `${e.tbl}|${e.id}|${e.field}` === k)
-      const now = queue.get(k)
-      if (now && sent && same(now.v, sent.v)) queue.delete(k)
-      else if (now && res.ok) now.base = sent.v
-      if (res.ok) continue
-      if (res.stale) {
+    let redo = false
+    const results = r.status === 200 ? r.body.results || [] : batch.map((e) => ({ ...e, ok: false, problem: r.body.problem || 'please refresh the page.' }))
+    for (const res of results) {
+      const out = Q.settle(res)
+      if (out.set) {
         const row = rowOf(TBL[res.tbl], res.id)
-        if (row) setField(res.tbl, row, res.field, res.current)
-        queue.delete(k)
-        note = 'Changed on another screen. It shows what was saved there.'
-      } else note = `Not saved: ${res.problem || 'please try again.'}`
+        if (row) setField(res.tbl, row, res.field, out.value)
+        redo = true
+      }
+      if (out.stale) note = 'Changed on another screen. It shows what was saved there.'
+      else if (out.problem) note = `Not saved: ${out.problem}`
     }
+    const kk = (e) => `${e.tbl}|${e.id}|${e.field}`
+    const answered = new Set(results.map(kk))
+    Q.retry(batch.filter((e) => !answered.has(kk(e))))
     lsWrite()
-    if (note) { status(/^Not/.test(note) ? 'bad' : 'note', note); redraw() } else if (!queue.size) status('ok', `Saved ${hhmm()}`)
-  } finally { busy = false }
-  if (queue.size) setTimeout(flush, 50)
+    if (redo) redraw()
+    if (note) status(/^Not/.test(note) ? 'bad' : 'note', note)
+    else if (!Q.size()) status('ok', `Saved ${hhmm()}`)
+  } finally {
+    busy = false
+    if (again && Q.waiting()) setTimeout(flush, again)
+  }
 }
-addEventListener('beforeunload', (e) => { if (queue.size || busy) { e.preventDefault(); e.returnValue = '' } })
+addEventListener('beforeunload', (e) => { if (Q.size() || busy) { e.preventDefault(); e.returnValue = '' } })
 addEventListener('online', () => flush())
 
 async function addRow(tbl, row, extraUndo = []) {
@@ -171,7 +181,7 @@ function lineHtml(l, rec) {
   const t = targetOf(l)
   const pt = pickText(l)
   const who = rec && ['sue', 'revised', 'new'].includes(rec.source_tag) ? 'Sue wrote' : 'Was'
-  const was = l.src_was && normName(l.src_was) !== normName(`${num(l.src_qty)}${l.src_unit || ''}`) ? `<small class="l-was">${who}: ${esc(l.src_was)}</small>` : ''
+  const was = l.src_was && normName(l.src_was).replace(/ /g, '') !== normName(`${num(l.src_qty)}${l.src_unit || ''}`).replace(/ /g, '') ? `<small class="l-was">${who}: ${esc(l.src_was)}</small>` : ''
   const needQty = (l.item_id || l.batch_id) && (l.qty === null || l.qty === undefined)
   const q = S.ask.get(`lines|${l.id}`)
   return `<div class="ln" id="ln-${esc(l.id)}" data-line="${esc(l.id)}">
@@ -186,7 +196,7 @@ function lineHtml(l, rec) {
       ${needQty ? `<span class="amt">Amount? <span class="grey">Recipe says ${esc(srcText(l))}${t ? `: enter the ${esc(unitWord(t, 2))}` : ''}</span></span>` : ''}
     </div></div>`
 }
-const askHtml = (q) => `<div class="ask">Did you mean ${q.ask.map((n) => `<button type="button" class="btn sm ghost" data-act="ask" data-v="${n}">${n}</button>`).join(' or ')}?</div>`
+const askHtml = (q) => `<div class="ask">Did you mean ${q.ask.map((n) => `<button type="button" class="btn sm ghost" data-act="ask" data-v="${n}">${n}</button>`).join(' or ')}</div>`
 
 function recipeBody(rid, { cardId = null } = {}) {
   const r = IX.recipes.get(rid)
@@ -891,12 +901,20 @@ function onChange(e) {
   if (el.dataset.act === 'serve') { const ex = IX.extras.get(el.closest('[data-extra]').dataset.extra); return act([{ tbl: 'extras', id: ex.id, field: 'serve', value: el.value }]) }
   if (el.dataset.act === 'notes') return act([{ tbl: 'recipes', id, field: 'notes', value: el.value }])
   if (el.dataset.act === 'makes-word') {
+    // B-2: a new unit says the same amount another way (3,000 g shows as 3 kg); it never multiplies the number
     const r = IX.recipes.get(id)
-    const [unit, f] = MAKES[el.value]
-    const shown = r.makes_qty === null ? null : Number(showBase(r.makes_qty, r.makes_word || r.makes_unit))
-    const ch = [{ tbl: 'recipes', id, field: 'makes', value: { qty: shown === null ? null : Math.round(shown * f * 1000) / 1000, unit: shown === null ? null : unit, word: shown === null ? null : el.value } }]
-    if (shown === null) { r.makes_word = el.value; return drawCard(id) }
-    if (r.make_at_base !== null && r.make_at_base !== undefined) ch.push({ tbl: 'recipes', id, field: 'make_at_base', value: Math.round(Number(showBase(r.make_at_base, r.makes_word || r.makes_unit)) * f * 1000) / 1000 })
+    const was = r.makes_word || r.makes_unit || 'g'
+    if (r.makes_qty === null || r.makes_qty === undefined) { r.makes_word = el.value; return drawCard(id) }
+    const w = rewordMakes({ qty: r.makes_qty, unit: r.makes_unit, word: was }, el.value)
+    const row = el.closest('.row')
+    const old = row.querySelector('.err')
+    if (old) old.remove()
+    if (!w.ok) { el.value = was; el.insertAdjacentHTML('afterend', `<span class="err">Not saved: ${esc(w.problem)}</span>`); return }
+    const ch = [{ tbl: 'recipes', id, field: 'makes', value: w.value }]
+    if (r.make_at_base !== null && r.make_at_base !== undefined && w.value.unit !== r.makes_unit) {
+      const m = toBase(shownAmount(r.make_at_base, was), el.value)
+      if (m !== null && m < MAX) ch.push({ tbl: 'recipes', id, field: 'make_at_base', value: m })
+    }
     return act(ch)
   }
   if (el.dataset.qty || el.dataset.batch) return amount(el, true)
@@ -923,12 +941,11 @@ function amount(el, final) {
   if (el.dataset.qty === 'lines') { const l = IX.lines.get(el.closest('[data-line]').dataset.line); S.ask.delete(`lines|${l.id}`); return act([{ tbl: 'lines', id: l.id, field: 'qty', value: v.value }]) }
   if (el.dataset.qty === 'cards') { const k = IX.cards.get(el.closest('[data-card]').dataset.card); return act([{ tbl: 'cards', id: k.id, field: 'item_qty', value: v.value }]) }
   if (el.dataset.qty === 'extras') { const x = IX.extras.get(el.closest('[data-extra]').dataset.extra); return act([{ tbl: 'extras', id: x.id, field: 'qty', value: v.value }]) }
-  const r = IX.recipes.get(id)
   const word = cardEl.querySelector('[data-act="makes-word"]').value
-  const [unit, f] = MAKES[word]
-  const base = v.value === null ? null : Math.round(v.value * f * 1000) / 1000
-  if (base !== null && base > 100000) { el.classList.add('bad'); el.insertAdjacentHTML('afterend', '<span class="err">Not saved: that is more than 100,000.</span>'); return }
-  if (el.dataset.batch === 'makes') return act([{ tbl: 'recipes', id, field: 'makes', value: { qty: base, unit: base === null ? null : unit, word: base === null ? null : word } }])
+  const base = toBase(v.value, word)
+  const tooMuch = el.dataset.batch === 'makes' ? base !== null && base > MAX : base !== null && base >= MAX
+  if (tooMuch) { el.classList.add('bad'); el.insertAdjacentHTML('afterend', `<span class="err">Not saved: that is ${el.dataset.batch === 'makes' ? 'more than' : 'not below'} 100,000 ${esc(word === 'kg' ? 'g' : word === 'L' ? 'ml' : word)} in all.</span>`); return }
+  if (el.dataset.batch === 'makes') return act([{ tbl: 'recipes', id, field: 'makes', value: { qty: base, unit: base === null ? null : MAKES[word][0], word: base === null ? null : word } }])
   return act([{ tbl: 'recipes', id, field: 'make_at_base', value: base }])
 }
 
@@ -1023,21 +1040,23 @@ function useData(d) {
   for (const r of D.recipes) { if (r.makes_qty !== null) r.makes_qty = Number(r.makes_qty); if (r.make_at_base !== null) r.make_at_base = Number(r.make_at_base) }
   for (const e of D.extras) if (e.qty !== null) e.qty = Number(e.qty)
   // what this screen typed and had not saved yet goes back on, with the base it was typed against
-  for (const e of queue.values()) { const row = (D[TBL[e.tbl]] || []).find((x) => x.id === e.id); if (row) setField(e.tbl, row, e.field, e.v) }
+  for (const e of Q.pending()) { const row = (D[TBL[e.tbl]] || []).find((x) => x.id === e.id); if (row) setField(e.tbl, row, e.field, e.v) }
   reindex()
 }
 async function look() {
-  if (document.hidden || busy || queue.size || S.P) return
+  if (document.hidden || busy || Q.size() || S.P) return
   const a = document.activeElement
   if (a && a.matches && a.matches('input, textarea, select') && a.id !== 'search') return
   let r
   try { r = await call({ action: 'open' }) } catch { return }
-  if (r.status !== 200 || busy || queue.size || S.P) return
+  if (r.status !== 200 || busy || Q.size() || S.P) return
   useData(r.body.data)
   if (!S.canEdit) renderChanges(r.body.changes || [])
   redraw()
 }
 
+// the page decides where it opens (B-1), not the browser's memory of the last visit
+if ('scrollRestoration' in history) history.scrollRestoration = 'manual'
 async function start() {
   if (!key) { $('#list').innerHTML = '<p class="loading">This link is missing its key. Please use the link Tarryn sent.</p>'; return }
   let r
@@ -1053,12 +1072,14 @@ async function start() {
     $('#title').textContent = d.intro.title
     $('#whoLine').textContent = d.intro.sub
     $('#foot').textContent = d.intro.foot
+    // B-1: the first visit opens at the top with the how-to showing; it counts as seen from the next visit on
     let seen = false
     try { seen = localStorage.getItem('badger-recipebuilder-howto') === '1'; localStorage.setItem('badger-recipebuilder-howto', '1') } catch { /* fine */ }
+    S.seenHowto = seen
     $('#notes').innerHTML = `<details class="note"${seen ? '' : ' open'}><summary>How to use this page</summary><ol>${d.intro.howto.map((x) => `<li>${esc(x)}</li>`).join('')}</ol></details>`
   }
   if (S.canEdit) {
-    try { for (const e of JSON.parse(localStorage.getItem(PENDING) || '[]')) if (e && e.tbl && e.id && e.field && 'base' in e) queue.set(`${e.tbl}|${e.id}|${e.field}`, e) } catch { /* fine */ }
+    try { Q = saveQueue(JSON.parse(localStorage.getItem(PENDING) || '[]')) } catch { /* fine */ }
   }
   useData(d.data)
   if (!S.canEdit) {
@@ -1069,15 +1090,23 @@ async function start() {
   $('#find').hidden = false
   P = progress(D)
   // open where she left off (spec 20.3); a deep link wins
-  const deep = new URLSearchParams(location.hash.slice(1)).get('card')
-  const first = deep && (IX.cards.has(deep) || IX.recipes.has(deep)) ? deep : S.canEdit ? needsOrder()[0] : null
+  const deepId = new URLSearchParams(location.hash.slice(1)).get('card')
+  const deep = deepId && (IX.cards.has(deepId) || IX.recipes.has(deepId)) ? deepId : null
+  const plan = openingPlan({ seenHowto: S.seenHowto !== false, deep, first: S.canEdit ? needsOrder()[0] || null : null })
+  const first = plan.open
   if (first) S.open.add(first)
   renderAll()
   document.documentElement.style.setProperty('--barH', `${Math.ceil($('#bar').getBoundingClientRect().height)}px`)
   wire()
   status('ok', S.canEdit ? 'Changes save as you go' : 'Read only')
-  if (first) requestAnimationFrame(() => { const el = document.getElementById(`card-${first}`); if (el) el.scrollIntoView({ block: 'start' }) })
-  if (queue.size) { status('saving', 'Saving...'); flush() }
+  if (first && plan.scroll) requestAnimationFrame(() => { const el = document.getElementById(`card-${first}`); if (el) el.scrollIntoView({ block: 'start' }) })
+  else scrollTo(0, 0)
+  // closing the how-to on the first visit takes her to the first card that needs her
+  const how = $('#notes details')
+  // (a details drawn open fires a toggle of its own, so this waits for the first one that closes it)
+  let went = false
+  if (how && first && !plan.scroll) how.addEventListener('toggle', () => { if (!how.open && !went) { went = true; const el = document.getElementById(`card-${first}`); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }) } })
+  if (Q.size()) { status('saving', 'Saving...'); flush() }
   setInterval(look, POLL_MS)
   document.addEventListener('visibilitychange', () => { if (!document.hidden) look() })
 }

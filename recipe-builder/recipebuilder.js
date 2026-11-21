@@ -190,7 +190,12 @@ export function validate(tbl, field, value) {
     return no('That cannot be changed here.')
   }
   if (['confirmed', 'removed', 'on_menu', 'left_out', 'we_make_this', 'active'].includes(field)) return bool(value, 'Tap it again.')
-  if (['qty', 'item_qty', 'make_at_base'].includes(field)) return parseAmount(value)
+  if (field === 'make_at_base') {
+    // spec 8: above 0 and BELOW 100,000, as the database holds it (test N-1: 100,000 itself jammed the save)
+    const a = parseAmount(value)
+    return a.ok && a.value !== null && a.value >= MAX ? no(`type an amount below ${MAX}.`) : a
+  }
+  if (['qty', 'item_qty'].includes(field)) return parseAmount(value)
   if (field === 'name') {
     if (value === null || value === undefined) return tbl === 'cards' ? ok(null) : no('it needs a name.')
     if (typeof value !== 'string') return no('That could not be read as words.')
@@ -481,6 +486,100 @@ export function loopReason(recipeId, batchId, D) {
 }
 export const wouldLoop = (recipeId, batchId, D) => loopReason(recipeId, batchId, D) !== null
 
+// ---------------------------------------------------------------- fixes after the independent test (05-test-report.md)
+
+/** B-1: where the page opens. The first visit stays at the top with the how-to showing; a link to one card wins. */
+export function openingPlan({ seenHowto, deep, first }) {
+  if (deep) return { open: deep, scroll: true }
+  if (!first) return { open: null, scroll: false }
+  return { open: first, scroll: !!seenHowto }
+}
+
+/** The units she may say a batch makes in, each with its base unit and factor. */
+export const MAKES_WORDS_TO_BASE = { g: ['g', 1], kg: ['g', 1000], ml: ['ml', 1], L: ['ml', 1000], each: ['each', 1], portions: ['each', 1] }
+export const shownAmount = (base, word) => (base === null || base === undefined ? null : round3(Number(base) / (MAKES_WORDS_TO_BASE[word] || ['', 1])[1]))
+export const toBase = (n, word) => (n === null || n === undefined ? null : round3(Number(n) * (MAKES_WORDS_TO_BASE[word] || ['', 1])[1]))
+/**
+ * B-2: a new unit for what a batch makes. The same kind of unit says the same amount another way (3,000 g is 3 kg);
+ * another kind keeps the number she sees, in the new unit (2 L becomes 2 kg). Over the limit is refused, never saved.
+ */
+export function rewordMakes(cur, word) {
+  const to = MAKES_WORDS_TO_BASE[word]
+  if (!to) return no('choose a unit from the list.')
+  if (!cur || cur.qty === null || cur.qty === undefined) return ok({ qty: null, unit: null, word: null })
+  if (to[0] === cur.unit) return ok({ qty: Number(cur.qty), unit: cur.unit, word })
+  const base = toBase(shownAmount(cur.qty, cur.word || cur.unit), word)
+  if (!(base > 0) || base > MAX) return no(`that would be more than ${MAX} ${to[0]}. Type the amount again in ${word}.`)
+  return ok({ qty: base, unit: to[0], word })
+}
+
+/**
+ * B-3: the page's saves, one entry per field. A change made while an earlier save of the same field is still on its way
+ * (an Undo tapped at once) is kept and sent next, from the value that was sent, so it always lands. A refused save
+ * hands back the saved value to put on screen, so the next save starts from the truth.
+ *   change(meta, old, value)  meta: { tbl, id, field }; old: what the screen showed before
+ *   take()                    the entries to send now (moved to "on its way")
+ *   settle(result)            one answer: { set: false } or { set: true, value, problem?, stale? }
+ *   retry(entries)            no connection: send them again later
+ */
+export function saveQueue(initial = []) {
+  const queued = new Map()
+  const sending = new Map()
+  const k = (m) => `${m.tbl}|${m.id}|${m.field}`
+  for (const e of initial) if (e && e.tbl && e.id && e.field && 'base' in e) queued.set(k(e), { tbl: e.tbl, id: e.id, field: e.field, v: e.v, base: e.base })
+  return {
+    change(m, old, value) {
+      const key = k(m)
+      const q = queued.get(key)
+      const s = sending.get(key)
+      const base = q ? q.base : s ? s.v : old
+      if (same(base, value)) { queued.delete(key); return }
+      queued.set(key, { tbl: m.tbl, id: m.id, field: m.field, v: value, base })
+    },
+    take(max = 250) {
+      const out = []
+      for (const [key, e] of queued) {
+        if (sending.has(key)) continue // one save of a field at a time: the next waits for the answer
+        if (out.length >= max) break
+        out.push(e)
+      }
+      for (const e of out) { queued.delete(k(e)); sending.set(k(e), e) }
+      return out.map((e) => ({ ...e }))
+    },
+    settle(r) {
+      const key = k(r)
+      const e = sending.get(key)
+      sending.delete(key)
+      const next = queued.get(key)
+      if (r.ok) return { set: false }
+      if (r.stale) {
+        queued.delete(key)
+        return { set: true, value: r.current ?? null, stale: true }
+      }
+      // refused: the server still holds what it held before this save
+      if (next && e) {
+        if (same(next.v, e.base)) { queued.delete(key); return { set: true, value: e.base, problem: r.problem } }
+        next.base = e.base
+        return { set: false, problem: r.problem }
+      }
+      return { set: true, value: e ? e.base : null, problem: r.problem }
+    },
+    retry(entries) {
+      for (const e of entries) {
+        const key = k(e)
+        sending.delete(key)
+        const next = queued.get(key)
+        if (!next) { queued.set(key, e); continue }
+        if (same(next.v, e.base)) queued.delete(key)
+        else next.base = e.base
+      }
+    },
+    size() { return queued.size + sending.size },
+    waiting() { return queued.size },
+    pending() { return [...sending.values(), ...queued.values()].map((e) => ({ ...e })) },
+  }
+}
+
 // ---------------------------------------------------------------- the door
 
 const KEY = /^[A-Za-z0-9_-]{32,128}$/
@@ -596,8 +695,10 @@ export async function handle(req, store) {
     if (!Array.isArray(req.saves) || !req.saves.length || req.saves.length > 300) return reply(400, { problem: 'That could not be done.' })
     const results = []
     for (const s of req.saves) {
-      const r = await saveOne(s, store, me.who)
-      results.push({ tbl: s.tbl, id: s.id, field: s.field, ok: r.status === 200, ...r.body })
+      // test N-1: one save the database refuses must never take the others down with it
+      let r
+      try { r = await saveOne(s, store, me.who) } catch { r = reply(500, { problem: 'that could not be saved. Please try it again.' }) }
+      results.push({ tbl: s && s.tbl, id: s && s.id, field: s && s.field, ok: r.status === 200, ...r.body })
     }
     return reply(200, { results })
   }
