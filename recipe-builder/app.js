@@ -12,7 +12,7 @@ import {
   SECTIONS, HEADINGS, MOVE_TO, sectionOf, sectionOfCat, normName, wordsOf, toItemQty, unitWord, parseAmount, readBack,
   lineState, cardStatus, progress, extrasFor, allCorrect, layout, strays, loopReason, fieldValue, setField,
   saveQueue, openingPlan, rewordMakes, shownAmount, toBase, MAX,
-  groupState, optionState, cardOptionState, addonState, pickWords, parsePrice, liveOptions,
+  groupState, optionState, cardOptionState, addonState, pickWords, parsePrice, liveOptions, SEED_RULE,
 } from './recipebuilder.js'
 
 const API = 'https://nptyrtjdvqglgwkaepce.supabase.co/functions/v1/badger-recipebuilder'
@@ -209,6 +209,8 @@ function partHead(title, states, extra = '') {
   return `<p class="h3 part">${esc(title)}${extra}${w ? ` <span class="pc">. ${esc(w)}</span>` : ''}</p>`
 }
 const seededOpen = (r) => !!(r && r.prefill_rule && !r.confirmed)
+/** Only what tonight's load added (22/11) counts as new since she finished. */
+const seedNew = (r) => !!(r && r.prefill_rule === SEED_RULE && !r.confirmed)
 /** "We picked this" with its Yes, on any of the new rows (choices, options, charges, add-ons). */
 function tagRow(tbl, row) {
   if (seededOpen(row)) return `<span class="tag">We picked this${S.canEdit ? ` <button type="button" class="lnk" data-act="ok-row" data-tbl="${tbl}" data-id="${esc(row.id)}">Yes, that's right</button>` : ''}</span>`
@@ -315,8 +317,8 @@ function newsOf(c) {
   const notes = []
   const adds = D.addons.filter((a) => ids.includes(a.card_id) && !a.removed)
   for (const a of adds) {
-    if (seededOpen(a)) names.push(a.recipe_id ? (IX.recipes.get(a.recipe_id) || {}).name : itemName(a.item_id))
-    if (seededOpen(a) && a.item_id) {
+    if (seedNew(a)) names.push(a.recipe_id ? (IX.recipes.get(a.recipe_id) || {}).name : itemName(a.item_id))
+    if (seedNew(a) && a.item_id) {
       const mine = D.extras.find((e) => ids.includes(e.card_id) && !e.removed && e.action === 'add' && e.item_id === a.item_id && !e.prefill_rule)
       if (mine) notes.push(`${itemName(a.item_id)} is now an add-on: remove it from packaging if it is not always given.`)
     }
@@ -324,21 +326,21 @@ function newsOf(c) {
   for (const rid of rids) {
     for (const g of D.groups.filter((x) => x.recipe_id === rid && !x.removed)) {
       const os = D.options.filter((o) => o.group_id === g.id && !o.removed)
-      if (seededOpen(g)) names.push(`${g.name} choice`)
-      else for (const o of os) if (seededOpen(o)) names.push(o.name)
-      if (seededOpen(g)) {
+      if (seedNew(g)) names.push(`${g.name} choice`)
+      else for (const o of os) if (seedNew(o)) names.push(o.name)
+      if (seedNew(g)) {
         const picks = new Set(D.lines.filter((l) => !l.removed && os.some((o) => o.id === l.option_id)).map((l) => l.item_id || l.batch_id).filter(Boolean))
         const mine = D.lines.filter((l) => l.recipe_id === rid && l.place !== 'option' && !l.removed && !l.prefill_rule && picks.has(l.item_id || l.batch_id))
         if (mine.length > 1) notes.push(`Your ${mine.length} ${g.name.toLowerCase()} lines may now be the ${g.name} choice: remove them if one ${g.name.toLowerCase()} is picked.`)
       }
     }
-    for (const l of D.lines.filter((x) => x.recipe_id === rid && !x.removed && x.place !== 'option' && seededOpen(x))) names.push(pickText(l))
+    for (const l of D.lines.filter((x) => x.recipe_id === rid && !x.removed && x.place !== 'option' && seedNew(x))) names.push(pickText(l))
   }
-  for (const k of D.card_options.filter((x) => ids.includes(x.card_id) && !x.removed && seededOpen(x))) {
+  for (const k of D.card_options.filter((x) => ids.includes(x.card_id) && !x.removed && seedNew(x))) {
     const o = IX.options.get(k.option_id)
     if (o && !o.removed) names.push(`${o.name}${k.extra ? `: Add R${num(k.extra)}` : ''}`)
   }
-  for (const e of D.extras.filter((x) => ids.includes(x.card_id) && !x.removed && seededOpen(x))) names.push(itemName(e.item_id))
+  for (const e of D.extras.filter((x) => ids.includes(x.card_id) && !x.removed && seedNew(x))) names.push(itemName(e.item_id))
   const u = [...new Set(names.filter(Boolean))]
   if (!u.length && !notes.length) return ''
   const list = u.length ? `New since you finished: ${u.slice(0, 4).join(', ')}${u.length > 4 ? ` and ${u.length - 4} more` : ''}. Please check.` : ''
