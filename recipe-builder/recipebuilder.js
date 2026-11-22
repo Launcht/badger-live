@@ -511,7 +511,8 @@ export function allCorrect(id, D) {
 export function layout(D) {
   index(D)
   const out = []
-  const rs = D.recipes.filter((r) => isBatch(r) && !r.removed && !r.left_out)
+  // A batch loaded into the admin's Recipes leaves the page (Tarryn 22/11/2026); it can still be picked in her recipes.
+  const rs = D.recipes.filter((r) => isBatch(r) && !r.removed && !r.left_out && !r.loaded_recipe_id)
   for (const grp of ['Bakes', 'Made ahead']) {
     for (const r of rs.filter((x) => (x.grp || 'Made ahead') === grp && !x.not_made_yet).sort(byName)) out.push({ id: r.id, section: 'batches', group: grp, kind: 'batch' })
   }
