@@ -13,7 +13,7 @@ import {
   lineState, cardStatus, progress, extrasFor, allCorrect, layout, strays, loopReason, fieldValue, setField,
   saveQueue, openingPlan, rewordMakes, shownAmount, toBase, MAX,
   groupState, optionState, cardOptionState, addonState, pickWords, parsePrice, liveOptions, SEED_RULE,
-} from './recipebuilder.js'
+} from './recipebuilder.js?v=2026112202'
 
 const API = 'https://nptyrtjdvqglgwkaepce.supabase.co/functions/v1/badger-recipebuilder'
 const key = new URLSearchParams(location.hash.slice(1)).get('k') || ''
