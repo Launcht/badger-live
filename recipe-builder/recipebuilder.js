@@ -517,7 +517,8 @@ export function layout(D) {
     for (const r of rs.filter((x) => (x.grp || 'Made ahead') === grp && !x.not_made_yet).sort(byName)) out.push({ id: r.id, section: 'batches', group: grp, kind: 'batch' })
   }
   for (const r of rs.filter((x) => x.not_made_yet).sort(byName)) out.push({ id: r.id, section: 'batches', group: 'notmade', kind: 'batch' })
-  const top = D.cards.filter((c) => !c.parent_id && !c.removed)
+  // A menu card already set up in the new admin leaves the page (Tarryn 22/11/2026).
+  const top = D.cards.filter((c) => !c.parent_id && !c.removed && !c.loaded_at)
   // "We don't make this" leaves the page and the count too (Tarryn 22/11/2026). The mark stays in the database.
   const st = strays(D).filter((r) => !r.left_out)
   for (const s of SECTIONS.slice(1)) {
