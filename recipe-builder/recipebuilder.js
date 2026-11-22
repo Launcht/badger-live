@@ -146,13 +146,31 @@ export function flavourOf(choiceValues) {
 
 // ---------------------------------------------------------------- the stored shapes and the fields she may change
 
-export const TABLES = ['recipes', 'lines', 'cards', 'rules', 'extras']
+export const TABLES = ['recipes', 'lines', 'cards', 'rules', 'extras', 'groups', 'options', 'card_options', 'addons']
 export const FIELDS = {
   recipes: ['name', 'makes', 'make_at_base', 'notes', 'kind', 'grp', 'left_out', 'we_make_this', 'removed'],
   lines: ['pick', 'qty', 'confirmed', 'removed'],
   cards: ['name', 'heading_id', 'on_menu', 'made', 'item_qty', 'confirmed', 'removed'],
   rules: ['active'],
   extras: ['item_id', 'qty', 'serve', 'confirmed', 'removed'],
+  // 22/11 choices, add-ons and packaging (spec 2026-11-22-recipe-page-choices)
+  groups: ['name', 'pick', 'sort', 'confirmed', 'removed'],
+  options: ['name', 'usual', 'sort', 'confirmed', 'removed'],
+  card_options: ['extra', 'confirmed', 'removed'],
+  addons: ['pick', 'qty', 'price', 'confirmed', 'removed'],
+}
+/** The seed's mark on every row it wrote on 22/11: To check until she confirms it. */
+export const SEED_RULE = 'seed-2211'
+/** A price in rands: blank is null (not set), R0 is free. "R6", "6,50" and "6.5" all read. */
+export function parsePrice(v) {
+  if (v === null || v === undefined) return ok(null)
+  if (typeof v === 'number') return Number.isFinite(v) && v >= 0 && v <= MAX ? ok(Math.round(v * 100) / 100) : no('type a price in rands, like 6 or 6.50.')
+  if (typeof v !== 'string') return no('type a price in rands, like 6 or 6.50.')
+  const t = v.trim().replace(/^\+?\s*R\s*/i, '')
+  if (!t) return ok(null)
+  if (!/^\d{1,6}([.,]\d{1,2})?$/.test(t)) return no('type a price in rands, like 6 or 6.50.')
+  const n = Number(t.replace(',', '.'))
+  return n <= MAX ? ok(Math.round(n * 100) / 100) : no('type a price in rands, like 6 or 6.50.')
 }
 export const ROW_ID = /^[a-z]-[a-z0-9-]{1,70}$/
 const ITEM_ID = /^[A-Za-z0-9-]{1,64}$/
@@ -167,17 +185,20 @@ export function fieldValue(tbl, row, field) {
     return { item_id: row.item_id ?? null, batch_id: row.batch_id ?? null, not_counted: !!row.not_counted, not_in_stock: !!row.not_in_stock }
   }
   if (tbl === 'cards' && field === 'made') return { made_from: row.made_from ?? null, recipe_id: row.recipe_id ?? null, item_id: row.item_id ?? null }
+  if (tbl === 'groups' && field === 'pick') return { min_pick: row.min_pick ?? 1, max_pick: row.max_pick ?? 1, different: !!row.different }
+  if (tbl === 'addons' && field === 'pick') return { item_id: row.item_id ?? null, recipe_id: row.recipe_id ?? null }
   if (tbl === 'recipes' && field === 'makes') {
     return { qty: row.makes_qty === null || row.makes_qty === undefined ? null : Number(row.makes_qty), unit: row.makes_unit ?? null, word: row.makes_word ?? null }
   }
   const v = row[field]
   if (v === undefined) return null
-  return ['qty', 'item_qty', 'make_at_base'].includes(field) && v !== null ? Number(v) : v
+  return ['qty', 'item_qty', 'make_at_base', 'extra', 'price'].includes(field) && v !== null ? Number(v) : v
 }
 /** The other side: put a field's value back on a row. */
 export function setField(tbl, row, field, value) {
   if (tbl === 'lines' && field === 'pick') Object.assign(row, value)
   else if (tbl === 'cards' && field === 'made') Object.assign(row, value)
+  else if ((tbl === 'groups' || tbl === 'addons') && field === 'pick') Object.assign(row, value)
   else if (tbl === 'recipes' && field === 'makes') Object.assign(row, { makes_qty: value.qty, makes_unit: value.unit, makes_word: value.word })
   else row[field] = value
   return row
@@ -189,7 +210,23 @@ export function validate(tbl, field, value) {
     if (tbl === 'recipes' && field === 'makes_unit') return ['g', 'ml', 'each'].includes(value) || value === null ? ok(value) : no('choose g, ml or each.')
     return no('That cannot be changed here.')
   }
-  if (['confirmed', 'removed', 'on_menu', 'left_out', 'we_make_this', 'active'].includes(field)) return bool(value, 'Tap it again.')
+  if (['confirmed', 'removed', 'on_menu', 'left_out', 'we_make_this', 'active', 'usual'].includes(field)) return bool(value, 'Tap it again.')
+  if (field === 'sort') return Number.isInteger(value) && Math.abs(value) < 100000 ? ok(value) : no('That cannot be changed here.')
+  if (field === 'extra' || field === 'price') return parsePrice(value)
+  if (tbl === 'groups' && field === 'pick') {
+    if (!value || typeof value !== 'object') return no('choose how many.')
+    const mn = value.min_pick
+    const mx = value.max_pick
+    if (![0, 1].includes(mn) || !Number.isInteger(mx) || mx < 1 || mx > 10) return no('choose how many, from 1 to 10.')
+    return ok({ min_pick: mn, max_pick: mx, different: mx > 1 && value.different === true })
+  }
+  if (tbl === 'addons' && field === 'pick') {
+    if (!value || typeof value !== 'object') return no('choose an item or a recipe.')
+    const i = ref(value.item_id)
+    const r = value.recipe_id === null || value.recipe_id === undefined ? null : typeof value.recipe_id === 'string' && ROW_ID.test(value.recipe_id) ? value.recipe_id : undefined
+    if (i === undefined || r === undefined || (!i) === (!r)) return no('choose one item or one recipe.')
+    return ok({ item_id: i, recipe_id: r })
+  }
   if (field === 'make_at_base') {
     // spec 8: above 0 and BELOW 100,000, as the database holds it (test N-1: 100,000 itself jammed the save)
     const a = parseAmount(value)
@@ -286,7 +323,45 @@ function index(D) {
   for (const c of D.cards) if (c.parent_id && !c.removed) { if (!KIDS.has(c.parent_id)) KIDS.set(c.parent_id, []); KIDS.get(c.parent_id).push(c) }
   for (const l of KIDS.values()) l.sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0))
 }
-const recipeLines = (rid, D) => live(D.lines.filter((l) => l.recipe_id === rid))
+/** A recipe's live lines: an option's lines count only while the option and its choice are live. */
+const recipeLines = (rid, D) => live(D.lines.filter((l) => l.recipe_id === rid)).filter((l) => l.place !== 'option' || optionLive(l.option_id, D))
+const optionLive = (oid, D) => {
+  const o = (D.options || []).find((x) => x.id === oid)
+  if (!o) return true
+  if (o.removed) return false
+  const g = (D.groups || []).find((x) => x.id === o.group_id)
+  return !(g && g.removed)
+}
+const seededOpen = (r) => !!(r.prefill_rule && !r.confirmed)
+/** A recipe's live choice groups, in order. */
+export const liveGroups = (rid, D) => live((D.groups || []).filter((g) => g.recipe_id === rid)).sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0))
+export const liveOptions = (gid, D) => live((D.options || []).filter((o) => o.group_id === gid)).sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0))
+/** A choice: 'pick' with no live option, 'check' when we filled it, else 'done'. */
+export function groupState(g, D) {
+  if (g.removed) return 'off'
+  if (!liveOptions(g.id, D).length) return 'pick'
+  return seededOpen(g) ? 'check' : 'done'
+}
+export const optionState = (o) => (o.removed ? 'off' : seededOpen(o) ? 'check' : 'done')
+export const cardOptionState = (k) => (k.removed ? 'off' : seededOpen(k) ? 'check' : 'done')
+/** An add-on: 'pick' with no item or recipe, no amount for a stock item, or no price; 'check' when we filled it. */
+export function addonState(a) {
+  if (a.removed) return 'off'
+  if (!has(a.item_id) && !has(a.recipe_id)) return 'pick'
+  if (has(a.item_id) && !has(a.qty)) return 'pick'
+  if (!has(a.price)) return 'pick'
+  return seededOpen(a) ? 'check' : 'done'
+}
+/** The add-ons on a card (and its flavours), live. */
+export const cardAddons = (ids, D) => live((D.addons || []).filter((a) => ids.includes(a.card_id))).sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0))
+/** The extra charges on a card (and its flavours) whose option is live. */
+export const cardCharges = (ids, D) => live((D.card_options || []).filter((k) => ids.includes(k.card_id))).filter((k) => optionLive(k.option_id, D))
+/** "How many" in her words: "pick 1", "pick up to 2, each different", "pick 1 (optional)". */
+export function pickWords(g) {
+  const mx = g.max_pick ?? 1
+  const w = mx > 1 ? `pick up to ${mx}${g.different ? ', each different' : ''}` : 'pick 1'
+  return (g.min_pick ?? 1) === 0 ? `${w} (optional)` : w
+}
 
 /** The extras that go out with a card: its section's rules (less what she left off), and its own. Spec 7 and 20.9. */
 export function extrasFor(card, D) {
@@ -336,6 +411,8 @@ const counted = (r) => !r.removed && (!r.not_made_yet || r.we_make_this)
 export function strays(D) {
   const used = new Set()
   for (const c of D.cards) if (!c.removed && c.recipe_id) used.add(c.recipe_id)
+  // a recipe sold as an add-on (Fries add-on, Knife and Fork) is on the menu through its card
+  for (const a of D.addons || []) if (!a.removed && a.recipe_id) used.add(a.recipe_id)
   return D.recipes.filter((r) => !r.removed && !isBatch(r) && !used.has(r.id))
 }
 
@@ -349,10 +426,12 @@ export function cardStatus(id, D) {
   let check = 0
   let notInStock = 0
   const add = (s) => { if (s === 'pick') pick++; else if (s === 'check') check++ }
-  const lineCounts = (rid, seen = new Set()) => {
+  const seen = new Set()
+  const lineCounts = (rid) => {
     if (!rid || seen.has(rid)) return
     seen.add(rid)
     for (const l of recipeLines(rid, D)) { add(lineState(l)); if (l.not_in_stock) notInStock++ }
+    for (const g of liveGroups(rid, D)) { add(groupState(g, D)); for (const o of liveOptions(g.id, D)) add(optionState(o)) }
   }
   const words = (extra) => {
     if (!pick && !check) return { pick, check, done: true, label: 'Done', notInStock }
@@ -389,6 +468,9 @@ export function cardStatus(id, D) {
   }
   if (c.made_from === 'recipe' && !fl.length && !kids(c.id).length) lineCounts(c.recipe_id)
   for (const e of extrasFor(c, D)) if (!e.skipped) add(e.state)
+  const ids = [c.id, ...fl.map((k) => k.id)]
+  for (const k of cardCharges(ids, D)) add(cardOptionState(k))
+  for (const a of cardAddons(ids, D)) { add(addonState(a)); if (a.recipe_id) lineCounts(a.recipe_id) }
   return words()
 }
 
@@ -397,7 +479,13 @@ export function allCorrect(id, D) {
   index(D)
   const out = []
   const conf = (tbl, rid) => out.push({ tbl, id: rid, field: 'confirmed', value: true, base: false })
-  const lines = (rid) => { for (const l of recipeLines(rid, D)) if (lineState(l) === 'check') conf('lines', l.id) }
+  const lines = (rid) => {
+    for (const l of recipeLines(rid, D)) if (lineState(l) === 'check') conf('lines', l.id)
+    for (const g of liveGroups(rid, D)) {
+      if (groupState(g, D) === 'check') conf('groups', g.id)
+      for (const o of liveOptions(g.id, D)) if (optionState(o) === 'check') conf('options', o.id)
+    }
+  }
   if (id.startsWith('r-')) { lines(id); return out }
   const c = D.cards.find((x) => x.id === id)
   if (!c || c.combo || c.on_menu === false) return out
@@ -409,6 +497,13 @@ export function allCorrect(id, D) {
   }
   if (c.made_from === 'recipe' && !kids(c.id).length) lines(c.recipe_id)
   for (const e of extrasFor(c, D)) if (!e.skipped && e.state === 'check' && e.extra_id) conf('extras', e.extra_id)
+  const ids = [c.id, ...fl.map((k) => k.id)]
+  for (const k of cardCharges(ids, D)) if (cardOptionState(k) === 'check') conf('card_options', k.id)
+  const done = new Set()
+  for (const a of cardAddons(ids, D)) {
+    if (addonState(a) === 'check') conf('addons', a.id)
+    if (a.recipe_id && !done.has(a.recipe_id)) { done.add(a.recipe_id); lines(a.recipe_id) }
+  }
   return out
 }
 
@@ -617,6 +712,7 @@ async function saveOne(s, store, who) {
   if (r.missing) return reply(404, { problem: 'That could not be found.' })
   if (r.badItem) return reply(400, { problem: 'that item is no longer in our stock. Pick another.' })
   if (r.stale) return reply(409, { problem: 'Changed on another screen.', stale: true, current: r.current ?? null })
+  if (r.refused) return reply(400, { problem: r.refused })
   return reply(200, { at: r.at, changed: r.changed, value: v.value })
 }
 
@@ -662,6 +758,40 @@ function newRow(tbl, row) {
     const slot = row.slot === 'packaging' ? 'packaging' : null
     return ok({ id: newId('e'), card_id: cid, action: 'add', item_id: it.value, slot, qty: q.value, serve: sv.value, prefill_rule: null, prefill_item_id: null,
       confirmed: true, rule_id: slot ? id(row.rule_id) || null : null, removed: false })
+  }
+  if (tbl === 'groups') {
+    const rid = id(row.recipe_id)
+    const n = validate('groups', 'name', row.name)
+    if (!rid) return no('That recipe could not be found.')
+    if (!n.ok) return n
+    return ok({ id: newId('g'), recipe_id: rid, name: n.value, sort: 9000, min_pick: 1, max_pick: 1, different: false, removed: false, prefill_rule: null, confirmed: false })
+  }
+  if (tbl === 'options') {
+    const gid = id(row.group_id)
+    const n = validate('options', 'name', row.name)
+    if (!gid) return no('That choice could not be found.')
+    if (!n.ok) return n
+    return ok({ id: newId('o'), group_id: gid, name: n.value, usual: false, sort: 9000, removed: false, prefill_rule: null, confirmed: false })
+  }
+  if (tbl === 'card_options') {
+    const cid = id(row.card_id)
+    const oid = id(row.option_id)
+    const x = parsePrice(row.extra)
+    if (!cid || !oid) return no('That could not be found.')
+    if (!x.ok) return x
+    return ok({ id: newId('k'), card_id: cid, option_id: oid, extra: x.value, off: false, prefill_rule: null, confirmed: true, removed: false })
+  }
+  if (tbl === 'addons') {
+    const cid = id(row.card_id)
+    if (!cid) return no('That menu item could not be found.')
+    const pk = validate('addons', 'pick', { item_id: row.item_id ?? null, recipe_id: row.recipe_id ?? null })
+    if (!pk.ok) return pk
+    const q = parseAmount(row.qty ?? null)
+    const pr = parsePrice(row.price ?? null)
+    if (!q.ok || q.ask) return no('type the amount.')
+    if (!pr.ok) return pr
+    return ok({ id: newId('a'), card_id: cid, item_id: pk.value.item_id, recipe_id: pk.value.recipe_id, qty: q.value, price: pr.value, sort: 9000, prefill_rule: null,
+      confirmed: false, removed: false })
   }
   if (tbl === 'recipes') {
     const n = validate('recipes', 'name', row.name)
@@ -714,8 +844,14 @@ export async function handle(req, store) {
 /** The store, in memory, answering as the database does (a save and its change line together). For tests. */
 export function memoryStore({ keys, data }) {
   const D = structuredClone(data)
+  for (const t of ['groups', 'options', 'card_options', 'addons']) D[t] ||= []
   const changes = []
-  const parentOf = { lines: (row) => (row.recipe_id ? D.recipes.find((r) => r.id === row.recipe_id) : true), extras: (row) => D.cards.find((c) => c.id === row.card_id) }
+  const parentOf = {
+    lines: (row) => (row.recipe_id ? D.recipes.find((r) => r.id === row.recipe_id) : true), extras: (row) => D.cards.find((c) => c.id === row.card_id),
+    groups: (row) => D.recipes.find((r) => r.id === row.recipe_id), options: (row) => D.groups.find((g) => g.id === row.group_id),
+    card_options: (row) => D.cards.find((c) => c.id === row.card_id) && D.options.find((o) => o.id === row.option_id),
+    addons: (row) => D.cards.find((c) => c.id === row.card_id) && (!row.recipe_id || D.recipes.find((r) => r.id === row.recipe_id)),
+  }
   const liveItem = (id) => id === null || D.stock.some((k) => k.id === id)
   return {
     changes,
@@ -730,8 +866,15 @@ export function memoryStore({ keys, data }) {
       const before = fieldValue(tbl, row, field)
       if (same(before, value)) return { at, changed: false }
       if (!same(before, base)) return { stale: true, current: before }
-      if (field === 'pick' && !liveItem(value.item_id)) return { badItem: true }
+      if (field === 'pick' && !liveItem(value.item_id ?? null)) return { badItem: true }
       if ((field === 'item_id' && !liveItem(value)) || (field === 'made' && !liveItem(value.item_id))) return { badItem: true }
+      if (tbl === 'groups' && field === 'pick' && value.max_pick > Math.max(1, D.options.filter((o) => o.group_id === id && !o.removed).length)) {
+        return { refused: `This choice has only ${D.options.filter((o) => o.group_id === id && !o.removed).length} options.` }
+      }
+      if (tbl === 'options' && field === 'usual' && value === true) {
+        if (row.removed) return { refused: 'A removed option cannot be the usual.' }
+        for (const o of D.options) if (o.group_id === row.group_id && o.id !== id && o.usual) { o.usual = false; changes.push({ id: changes.length + 1, at, who, tbl, row_id: o.id, field, before: true, after: false }) }
+      }
       setField(tbl, row, field, value)
       row.touched_at = at
       row.touched_by = who
@@ -740,7 +883,7 @@ export function memoryStore({ keys, data }) {
     },
     async add(tbl, row, who) {
       if (parentOf[tbl] && !parentOf[tbl](row)) return { missing: true }
-      if (tbl === 'extras' && !liveItem(row.item_id)) return { badItem: true }
+      if ((tbl === 'extras' || tbl === 'addons') && !liveItem(row.item_id ?? null)) return { badItem: true }
       const at = new Date().toISOString()
       const r = { ...row, touched_at: at, touched_by: who }
       D[tbl].push(r)

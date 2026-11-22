@@ -12,6 +12,7 @@ import {
   SECTIONS, HEADINGS, MOVE_TO, sectionOf, sectionOfCat, normName, wordsOf, toItemQty, unitWord, parseAmount, readBack,
   lineState, cardStatus, progress, extrasFor, allCorrect, layout, strays, loopReason, fieldValue, setField,
   saveQueue, openingPlan, rewordMakes, shownAmount, toBase, MAX,
+  groupState, optionState, cardOptionState, addonState, pickWords, parsePrice, liveOptions,
 } from './recipebuilder.js'
 
 const API = 'https://nptyrtjdvqglgwkaepce.supabase.co/functions/v1/badger-recipebuilder'
@@ -21,7 +22,7 @@ const LATELY = 'badger-recipebuilder-lately'
 const POLL_MS = 25000
 
 let D = null
-const S = { canEdit: false, who: '', open: new Set(), q: '', need: false, P: null, undo: null, undoTimer: 0, ask: new Map() }
+const S = { canEdit: false, who: '', open: new Set(), q: '', need: false, P: null, undo: null, undoTimer: 0, ask: new Map(), gm: new Set(), ao: new Set(), carry: new Map() }
 const $ = (s, el = document) => el.querySelector(s)
 const $$ = (s, el = document) => [...el.querySelectorAll(s)]
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
@@ -29,12 +30,14 @@ const hhmm = (t = new Date()) => `${String(t.getHours()).padStart(2, '0')}:${Str
 const num = (n) => (n === null || n === undefined ? '' : String(Number(n)))
 const ro = () => (S.canEdit ? '' : ' disabled')
 const same = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null)
-const TBL = { recipes: 'recipes', lines: 'lines', cards: 'cards', rules: 'rules', extras: 'extras' }
+const TBL = { recipes: 'recipes', lines: 'lines', cards: 'cards', rules: 'rules', extras: 'extras', groups: 'groups', options: 'options', card_options: 'card_options', addons: 'addons' }
 let IX = {}
 function reindex() {
   IX = {
     recipes: new Map(D.recipes.map((r) => [r.id, r])), lines: new Map(D.lines.map((r) => [r.id, r])), cards: new Map(D.cards.map((r) => [r.id, r])),
     rules: new Map(D.rules.map((r) => [r.id, r])), extras: new Map(D.extras.map((r) => [r.id, r])), stock: new Map(D.stock.map((k) => [k.id, k])),
+    groups: new Map(D.groups.map((r) => [r.id, r])), options: new Map(D.options.map((r) => [r.id, r])), card_options: new Map(D.card_options.map((r) => [r.id, r])),
+    addons: new Map(D.addons.map((r) => [r.id, r])),
   }
 }
 const rowOf = (tbl, id) => IX[tbl] && IX[tbl].get(id)
@@ -133,7 +136,7 @@ async function addRow(tbl, row, extraUndo = []) {
   try { r = await call({ action: 'add', tbl, row }) } catch { r = { status: 0, body: {} } }
   if (r.status !== 200) { status('bad', `Not saved: ${r.body.problem || 'no connection. Please try again.'}`); return null }
   const saved = r.body.row
-  D[tbl === 'rules' ? 'rules' : tbl].push(saved)
+  D[tbl].push(saved)
   reindex()
   status('ok', `Saved ${hhmm()}`)
   return saved
@@ -198,24 +201,88 @@ function lineHtml(l, rec) {
 }
 const askHtml = (q) => `<div class="ask">Did you mean ${q.ask.map((n) => `<button type="button" class="btn sm ghost" data-act="ask" data-v="${n}">${n}</button>`).join(' or ')}</div>`
 
+/** A part's heading with what is left in it ("Choices . 2 to pick"). */
+function partHead(title, states, extra = '') {
+  const p = states.filter((x) => x === 'pick').length
+  const c = states.filter((x) => x === 'check').length
+  const w = [p ? `${p} to pick` : '', c ? `${c} to check` : ''].filter(Boolean).join(', ')
+  return `<p class="h3 part">${esc(title)}${extra}${w ? ` <span class="pc">. ${esc(w)}</span>` : ''}</p>`
+}
+const seededOpen = (r) => !!(r && r.prefill_rule && !r.confirmed)
+/** "We picked this" with its Yes, on any of the new rows (choices, options, charges, add-ons). */
+function tagRow(tbl, row) {
+  if (seededOpen(row)) return `<span class="tag">We picked this${S.canEdit ? ` <button type="button" class="lnk" data-act="ok-row" data-tbl="${tbl}" data-id="${esc(row.id)}">Yes, that's right</button>` : ''}</span>`
+  return ''
+}
+const chargeOf = (cardId, oid) => D.card_options.find((k) => k.card_id === cardId && k.option_id === oid)
 function recipeBody(rid, { cardId = null } = {}) {
   const r = IX.recipes.get(rid)
   if (!r) return ''
   const ls = D.lines.filter((l) => l.recipe_id === rid).sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0))
   const plain = ls.filter((l) => l.place !== 'option')
-  const gs = D.groups.filter((g) => g.recipe_id === rid).sort((a, b) => a.sort - b.sort)
   const also = D.cards.filter((c) => !c.removed && c.recipe_id === rid && c.id !== cardId).map((c) => cardName(c.parent_id ? IX.cards.get(c.parent_id) || c : c))
-  let h = `<p class="src">${esc(SOURCE[r.source_tag] || 'Written here')}${also.length ? `. Also on: ${esc([...new Set(also)].join(', '))}` : ''}</p>`
-  h += `<div class="lines" data-recipe="${esc(rid)}">${plain.map((l) => lineHtml(l, r)).join('')}`
-  for (const g of gs) {
-    for (const o of D.options.filter((x) => x.group_id === g.id).sort((a, b) => a.sort - b.sort)) {
-      h += `<p class="opt">${esc(g.name)}: ${esc(o.name)}${o.usual ? ' (usual)' : ''}</p>`
-      h += ls.filter((l) => l.option_id === o.id).map((l) => lineHtml(l, r)).join('') || '<p class="grey">Nothing extra for this one.</p>'
+  let h = `<p class="src">${esc(r.id.startsWith('r-seed2211-') ? 'We set this up from the live menu (22/11). Please check it.' : SOURCE[r.source_tag] || 'Written here')}${also.length ? `. Also on: ${esc([...new Set(also)].join(', '))}` : ''}</p>`
+  h += partHead('Ingredients', plain.filter((l) => !l.removed).map(lineState))
+  h += `<div class="lines" data-recipe="${esc(rid)}">${plain.map((l) => lineHtml(l, r)).join('') || '<p class="grey">No ingredients yet.</p>'}</div>`
+  if (S.canEdit) h += `<button type="button" class="lnk" data-act="line-add" data-recipe="${esc(rid)}">+ Add an ingredient</button>`
+  if (r.kind !== 'batch') h += choicesHtml(r, ls, cardId)
+  return h
+}
+function choicesHtml(r, ls, cardId) {
+  const gs = D.groups.filter((g) => g.recipe_id === r.id).sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0))
+  const states = []
+  for (const g of gs.filter((x) => !x.removed)) {
+    states.push(groupState(g, D))
+    for (const o of liveOptions(g.id, D)) {
+      states.push(optionState(o))
+      for (const l of ls.filter((x) => x.option_id === o.id && !x.removed)) states.push(lineState(l))
+      const k = cardId && chargeOf(cardId, o.id)
+      if (k && !k.removed) states.push(cardOptionState(k))
     }
   }
-  h += '</div>'
-  if (S.canEdit) h += `<button type="button" class="lnk" data-act="line-add" data-recipe="${esc(rid)}">+ Add a line</button>`
+  let h = partHead('Choices', states)
+  for (const g of gs) {
+    if (g.removed) {
+      h += `<div class="choice gone" data-group="${esc(g.id)}"><span class="grey">Removed choice: ${esc(g.name)}</span>${S.canEdit ? '<button type="button" class="lnk" data-act="group-back">Put it back</button>' : ''}</div>`
+      continue
+    }
+    const os = D.options.filter((o) => o.group_id === g.id).sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0))
+    const n = os.filter((o) => !o.removed).length
+    h += `<div class="choice" data-group="${esc(g.id)}"><div class="ch-head"><b>${esc(g.name)}: ${esc(pickWords(g))}</b>${n ? '' : ' <span class="tag">Add an option</span>'} ${tagRow('groups', g)}
+      ${S.canEdit ? `<button type="button" class="lnk" data-act="group-menu" aria-expanded="${S.gm.has(g.id)}">Change</button>` : ''}</div>
+      ${S.canEdit && S.gm.has(g.id) ? groupMenu(g, n) : ''}`
+    for (const o of os) {
+      if (o.removed) {
+        h += `<div class="opt-row gone" data-option="${esc(o.id)}"><span class="grey">Removed: ${esc(o.name)}</span>${S.canEdit ? '<button type="button" class="lnk" data-act="option-back">Put it back</button>' : ''}</div>`
+        continue
+      }
+      const ol = ls.filter((l) => l.option_id === o.id)
+      const k = cardId ? chargeOf(cardId, o.id) : null
+      h += `<div class="opt-row" data-option="${esc(o.id)}"><div class="o-head">
+          <label class="usual"><input type="radio" name="u-${esc(g.id)}-${esc(cardId || r.id)}" data-act="usual"${o.usual ? ' checked' : ''}${ro()}> Usual</label>
+          <b class="o-name">${esc(o.name)}</b> ${tagRow('options', o)}
+          ${S.canEdit ? '<button type="button" class="lnk" data-act="option-rename">Rename</button><button type="button" class="lnk" data-act="option-remove">Remove</button>' : ''}</div>
+        ${ol.map((l) => lineHtml(l, r)).join('')}${ol.some((l) => !l.removed) ? '' : '<p class="grey">Nothing extra for this one.</p>'}
+        ${S.canEdit ? `<button type="button" class="lnk" data-act="optline-add">+ ${ol.some((l) => !l.removed) ? 'another item' : 'a stock item'}</button>` : ''}
+        ${cardId ? `<div class="charge"><label>Add R <input class="qty price" type="text" inputmode="decimal" data-price="card_options" data-cardid="${esc(cardId)}" value="${esc(k && !k.removed && k.extra !== null && k.extra !== undefined ? num(k.extra) : '')}" placeholder="0" aria-label="Amount added for ${esc(o.name)}, in rands" autocomplete="off"${ro()}></label>${k && !k.removed ? tagRow('card_options', k) : ''}</div>` : ''}
+        </div>`
+    }
+    if (S.canEdit) h += '<button type="button" class="lnk" data-act="option-add">+ Add an option</button>'
+    h += '</div>'
+  }
+  if (!gs.length) h += '<p class="grey">No choices. Add one if the person picks something, like the milk.</p>'
+  if (S.canEdit) h += `<button type="button" class="lnk" data-act="group-add" data-recipe="${esc(r.id)}">+ Add a choice</button>`
   return h
+}
+function groupMenu(g, n) {
+  const top = Math.max(1, Math.min(10, n), g.max_pick ?? 1)
+  const opts = Array.from({ length: top }, (_, i) => i + 1).map((i) => `<option value="${i}"${i === (g.max_pick ?? 1) ? ' selected' : ''}>${i === 1 ? 'Pick 1' : `Pick up to ${i}`}</option>`).join('')
+  return `<div class="gmenu panel"><div class="row">
+    <button type="button" class="btn sm ghost" data-act="group-rename">Rename</button>
+    <label class="grey">How many <select data-act="group-max" aria-label="How many">${opts}</select></label>
+    <label class="switch"><input type="checkbox" data-act="group-min"${(g.min_pick ?? 1) === 1 ? ' checked' : ''}> Must choose</label>
+    ${(g.max_pick ?? 1) > 1 ? `<label class="switch"><input type="checkbox" data-act="group-diff"${g.different ? ' checked' : ''}> Each different</label>` : ''}
+    <button type="button" class="btn sm ghost" data-act="group-remove">Remove this choice</button></div></div>`
 }
 
 // ---------------------------------------------------------------- a card
@@ -231,13 +298,51 @@ function headHtml(x, st) {
   const made = c.combo ? 'A combo' : c.made_from === 'recipe' ? (c.recipe_id ? `Recipe: ${(IX.recipes.get(c.recipe_id) || {}).name || ''}` : kids.length ? 'Its recipes, by flavour' : 'Recipe not chosen') :
     c.made_from === 'as_is' ? 'Sold as it is' : 'Not chosen yet'
   const sub = `${HEADINGS[c.heading_id] || 'No category yet'}. ${made}`
-  return headWrap(c.id, cardName(c), sub, st) + quickHtml(c, st)
+  return headWrap(c.id, cardName(c), sub, st, c.combo || c.on_menu === false ? '' : newsOf(c)) + quickHtml(c, st)
 }
-function headWrap(id, name, sub, st) {
+function headWrap(id, name, sub, st, news = '') {
   const cls = st.done ? (st.off ? 'st grey' : 'st ok') : 'st'
   return `<button type="button" class="c-head" data-act="toggle" aria-expanded="${S.open.has(id)}" aria-controls="b-${esc(id)}">
-    <span class="c-title"><span class="c-name">${esc(name)}</span><span class="c-sub">${esc(sub)}</span></span>
+    <span class="c-title"><span class="c-name">${esc(name)}</span><span class="c-sub">${esc(sub)}</span>${news ? `<span class="c-new">${esc(news)}</span>` : ''}</span>
     <span class="${cls}">${esc(st.label)}</span></button>`
+}
+/** Spec 4: why a finished card reopened. The names of what we added and she has not checked, at most four. */
+function newsOf(c) {
+  const kids = D.cards.filter((k) => k.parent_id === c.id && !k.removed)
+  const ids = [c.id, ...kids.map((k) => k.id)]
+  const rids = new Set([c.recipe_id, ...kids.map((k) => k.recipe_id)].filter(Boolean))
+  const names = []
+  const notes = []
+  const adds = D.addons.filter((a) => ids.includes(a.card_id) && !a.removed)
+  for (const a of adds) {
+    if (seededOpen(a)) names.push(a.recipe_id ? (IX.recipes.get(a.recipe_id) || {}).name : itemName(a.item_id))
+    if (seededOpen(a) && a.item_id) {
+      const mine = D.extras.find((e) => ids.includes(e.card_id) && !e.removed && e.action === 'add' && e.item_id === a.item_id && !e.prefill_rule)
+      if (mine) notes.push(`${itemName(a.item_id)} is now an add-on: remove it from packaging if it is not always given.`)
+    }
+  }
+  for (const rid of rids) {
+    for (const g of D.groups.filter((x) => x.recipe_id === rid && !x.removed)) {
+      const os = D.options.filter((o) => o.group_id === g.id && !o.removed)
+      if (seededOpen(g)) names.push(`${g.name} choice`)
+      else for (const o of os) if (seededOpen(o)) names.push(o.name)
+      if (seededOpen(g)) {
+        const picks = new Set(D.lines.filter((l) => !l.removed && os.some((o) => o.id === l.option_id)).map((l) => l.item_id || l.batch_id).filter(Boolean))
+        const mine = D.lines.filter((l) => l.recipe_id === rid && l.place !== 'option' && !l.removed && !l.prefill_rule && picks.has(l.item_id || l.batch_id))
+        if (mine.length > 1) notes.push(`Your ${mine.length} ${g.name.toLowerCase()} lines may now be the ${g.name} choice: remove them if one ${g.name.toLowerCase()} is picked.`)
+      }
+    }
+    for (const l of D.lines.filter((x) => x.recipe_id === rid && !x.removed && x.place !== 'option' && seededOpen(x))) names.push(pickText(l))
+  }
+  for (const k of D.card_options.filter((x) => ids.includes(x.card_id) && !x.removed && seededOpen(x))) {
+    const o = IX.options.get(k.option_id)
+    if (o && !o.removed) names.push(`${o.name}${k.extra ? `: Add R${num(k.extra)}` : ''}`)
+  }
+  for (const e of D.extras.filter((x) => ids.includes(x.card_id) && !x.removed && seededOpen(x))) names.push(itemName(e.item_id))
+  const u = [...new Set(names.filter(Boolean))]
+  if (!u.length && !notes.length) return ''
+  const list = u.length ? `New since you finished: ${u.slice(0, 4).join(', ')}${u.length > 4 ? ` and ${u.length - 4} more` : ''}. Please check.` : ''
+  return [list, ...notes].filter(Boolean).join(' ')
 }
 /** Quick rows (spec 20.13): a sold-as-it-is card whose only open items are its picks, confirmed without opening it. */
 function quickHtml(c, st) {
@@ -272,7 +377,7 @@ function madeHtml(c) {
   return `<div class="made" role="group" aria-label="What it is made from">
     <button type="button" class="mf${c.made_from === 'recipe' ? ' on' : ''}" data-act="made-recipe" aria-pressed="${c.made_from === 'recipe'}"${ro()}>Made from a recipe</button>
     <button type="button" class="mf${c.made_from === 'as_is' ? ' on' : ''}" data-act="made-asis" aria-pressed="${c.made_from === 'as_is'}"${ro()}>Sold as it is<small>Like a can of Coke: one stock item.</small></button>
-  </div>`
+  </div><p class="grey">Has a choice, like milk? Use Made from a recipe.</p>`
 }
 function recipeSelect(c, kid = null) {
   const cur = (kid || c).recipe_id || ''
@@ -302,14 +407,36 @@ function flavourBlock(c, k) {
     ${S.canEdit ? '<button type="button" class="lnk" data-act="flavour-drop">We don\'t sell this one</button>' : ''}</div>
     ${k.recipe_id ? recipeBody(k.recipe_id, { cardId: k.id }) : ''}</div>`
 }
+function addonsHtml(c) {
+  const as = D.addons.filter((a) => a.card_id === c.id && !a.removed).sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0))
+  const rows = as.map((a) => {
+    const t = a.item_id ? IX.stock.get(a.item_id) : null
+    const name = a.recipe_id ? (IX.recipes.get(a.recipe_id) || {}).name || 'a recipe' : itemName(a.item_id)
+    const open = S.ao.has(`${c.id}|${a.id}`)
+    return `<div class="ad" data-addon="${esc(a.id)}"><span class="ad-n"><b>${esc(name)}</b>${a.recipe_id ? ' <span class="grey">(recipe)</span>' : ''}</span>
+      ${a.item_id ? `<span class="qx">x</span><input class="qty" type="text" inputmode="decimal" data-qty="addons" value="${esc(num(a.qty))}" aria-label="Amount" autocomplete="off"${ro()}><span class="uw">${esc(unitWord(t, Number(a.qty ?? 2)))}</span>` : ''}
+      <label class="pr">Price R <input class="qty price" type="text" inputmode="decimal" data-price="addons" value="${esc(a.price === null || a.price === undefined ? '' : num(a.price))}" placeholder="?" aria-label="Price in rands" autocomplete="off"${ro()}></label>
+      ${a.price === 0 ? '<span class="tag ok">Free</span>' : ''}${a.price === null || a.price === undefined ? '<span class="amt">Price?</span>' : ''}
+      ${tagRow('addons', a)}
+      ${a.recipe_id ? `<button type="button" class="lnk" data-act="addon-open">${open ? 'Close its recipe' : 'Open its recipe'}</button>` : ''}
+      ${S.canEdit ? '<button type="button" class="lnk" data-act="addon-remove">Remove</button>' : ''}
+      ${a.recipe_id && open ? `<div class="ad-rec">${recipeBody(a.recipe_id, { cardId: c.id })}</div>` : ''}</div>`
+  }).join('')
+  return `${partHead('Add-ons', as.map(addonState), ' <span class="grey">(the person may tick these)</span>')}<div class="extras">${rows || '<p class="grey">None.</p>'}</div>
+    ${S.canEdit ? '<button type="button" class="lnk" data-act="addon-add">+ Add an add-on</button>' : ''}`
+}
 function extrasHtml(c) {
-  const xs = extrasFor(c, D)
+  const all = extrasFor(c, D)
+  return extrasPart(c, all.filter((e) => e.serve !== 'take_away'), 'Comes with', 'both', ' <span class="grey">(every sale, eat in or take away)</span>') +
+    extrasPart(c, all.filter((e) => e.serve === 'take_away'), 'Take-away packaging', 'take_away', ' <span class="grey">(only when taken away)</span>')
+}
+function extrasPart(c, xs, title, serve, sub) {
   const rows = xs.map((e) => {
-    const lbl = e.label ? `<span class="grey">for ${esc(e.label)}</span>` : ''
+    const lbl = e.label ? `<span class="grey">(${esc(e.label)})</span>` : ''
     if (e.skipped) return `<div class="ex"><span class="ex-t grey">Left off: ${esc(e.slot ? 'Packaging' : itemName(e.item_id))} ${lbl}</span>${S.canEdit ? `<button type="button" class="lnk" data-act="unskip" data-rule="${esc(e.rule_id)}">Put back</button>` : ''}</div>`
-    if (e.from === 'rule' && !e.slot) return `<div class="ex"><span class="ex-t">${num(e.qty)} ${esc(itemName(e.item_id))}. ${esc(SERVE[e.serve])} ${lbl}</span>${S.canEdit ? `<button type="button" class="lnk" data-act="skip" data-rule="${esc(e.rule_id)}">Leave off</button>` : ''}</div>`
+    if (e.from === 'rule' && !e.slot) return `<div class="ex"><span class="ex-t">${num(e.qty)} ${esc(itemName(e.item_id))} ${lbl}</span>${S.canEdit ? `<button type="button" class="lnk" data-act="skip" data-rule="${esc(e.rule_id)}">Leave off</button>` : ''}</div>`
     if (e.from === 'rule' && e.slot) {
-      return `<div class="ex"><span class="ex-t">Packaging. ${esc(SERVE[e.serve])} ${lbl}</span>
+      return `<div class="ex"><span class="ex-t">Packaging (toastie box, wrap box...) ${lbl}</span>
         <button type="button" class="pk blank" data-act="pick-slot" data-rule="${esc(e.rule_id)}"${ro()}>Pick the packaging...</button>
         ${S.canEdit ? `<button type="button" class="lnk" data-act="skip" data-rule="${esc(e.rule_id)}">Leave off</button>` : ''}</div>`
     }
@@ -318,12 +445,11 @@ function extrasHtml(c) {
     return `<div class="ex" data-extra="${esc(e.extra_id)}"><span class="ex-t">${e.slot ? '<b>Packaging</b> ' : ''}</span>
       <button type="button" class="pk${e.item_id ? '' : ' blank'}" data-act="pick-extra"${ro()}>${esc(e.item_id ? itemName(e.item_id) : 'Type to find...')}</button>
       <span class="qx">x</span><input class="qty" type="text" inputmode="decimal" data-qty="extras" value="${esc(num(e.qty))}" aria-label="How many" autocomplete="off"${ro()}>
-      <select class="serve" data-act="serve" aria-label="When"${ro()}>${Object.entries(SERVE).map(([k, w]) => `<option value="${k}"${x && x.serve === k ? ' selected' : ''}>${w}</option>`).join('')}</select>
       ${check ? `<span class="tag">We picked this${S.canEdit ? ' <button type="button" class="lnk" data-act="ok-extra">Yes, that\'s right</button>' : ''}</span>` : ''}
       ${S.canEdit ? '<button type="button" class="lnk" data-act="extra-remove">Remove</button>' : ''}</div>`
   }).join('')
-  return `<p class="h3">Goes out with it</p><div class="extras">${rows || '<p class="grey">Nothing yet.</p>'}</div>
-    ${S.canEdit ? '<button type="button" class="lnk" data-act="extra-add">+ Add an extra</button>' : ''}`
+  return `${partHead(title, xs.filter((e) => !e.skipped).map((e) => e.state), sub)}<div class="extras">${rows || '<p class="grey">Nothing yet.</p>'}</div>
+    ${S.canEdit ? `<button type="button" class="lnk" data-act="extra-add" data-serve="${serve}">+ Add</button>` : ''}`
 }
 function footHtml(id) {
   const n = S.canEdit ? allCorrect(id, D).length : 0
@@ -371,7 +497,7 @@ function bodyHtml(id) {
   } else if (c.made_from === 'as_is') {
     h += kids.length ? kids.map((k) => flavourBlock(c, k)).join('') : asIsLine(c, c)
   }
-  if (c.made_from) h += extrasHtml(c)
+  if (c.made_from) h += addonsHtml(c) + extrasHtml(c)
   return h + footHtml(id)
 }
 
@@ -575,6 +701,9 @@ function pickerOptions() {
       all.push({ kind: 'batch', id: r.id, name: r.name, sub: why === 'loop' ? 'This would put the batch inside itself' : why ? 'Batches can sit at most three deep' : `Batch . by the ${r.makes_unit === 'each' ? 'piece' : r.makes_unit || 'g'}`, group: 'Our batches', why })
     }
   }
+  if (P_.recipes) {
+    for (const r of D.recipes.filter((x) => x.kind === 'sold' && !x.removed && !x.left_out).sort((a, b) => a.name.localeCompare(b.name))) all.push({ kind: 'recipe', id: r.id, name: r.name, sub: 'Our recipe', group: 'Our recipes' })
+  }
   for (const k of D.stock) all.push({ kind: 'item', id: k.id, name: k.name, sub: `${k.shelf} . by the ${k.use_unit === 'each' ? (k.piece_name && k.piece_name !== 'each' ? k.piece_name : 'piece') : k.use_unit}`, group: k.shelf })
   return all
 }
@@ -598,6 +727,7 @@ function drawPicker() {
     const lat = lately().map((id) => all.find((o) => o.id === id)).filter(Boolean)
     if (lat.length) groups.push(['Used lately', lat])
     if (S.P.batches) groups.push(['Our batches', all.filter((o) => o.kind === 'batch')])
+    if (S.P.recipes) groups.push(['Our recipes', all.filter((o) => o.kind === 'recipe')])
     const shelves = [...new Set(all.filter((o) => o.kind === 'item').map((o) => o.group))]
     shelves.sort((a, b) => (S.P.packFirst ? (b === 'Packaging') - (a === 'Packaging') : 0) || ((SHELF_ORDER.indexOf(a) + 99) % 99) - ((SHELF_ORDER.indexOf(b) + 99) % 99) || a.localeCompare(b))
     for (const sh of shelves) groups.push([sh, all.filter((o) => o.kind === 'item' && o.group === sh)])
@@ -609,6 +739,7 @@ function drawPicker() {
   const f = []
   if (S.P.mode === 'line') f.push('<button type="button" class="btn ghost" data-pk="notin">Not in our stock yet</button>', '<button type="button" class="btn ghost" data-pk="notfrom">Not from stock (like tap water)</button>')
   if (S.P.flavour) f.push('<button type="button" class="btn ghost" data-pk="nosell">We don\'t sell this one</button>')
+  if (S.P.mode === 'newoption') f.push('<button type="button" class="btn ghost" data-pk="nostock">No stock item (like a Single shot)</button>')
   $('#pkFoot').innerHTML = f.join('')
   $('#pkFoot').hidden = !f.length
 }
@@ -640,6 +771,14 @@ function choose(o) {
   const P_ = S.P
   closePicker()
   if (o.kind === 'item' || o.kind === 'batch') remember(o.id)
+  if (P_.mode === 'newoption') return newOption(P_, o)
+  if (P_.mode === 'addon') {
+    if (o.kind !== 'item' && o.kind !== 'recipe') return
+    const t = o.kind === 'item' ? IX.stock.get(o.id) : null
+    addRow('addons', { card_id: P_.card, item_id: o.kind === 'item' ? o.id : null, recipe_id: o.kind === 'recipe' ? o.id : null, qty: !t || t.use_unit === 'each' ? 1 : null, price: null })
+      .then((row) => { if (row) { showUndo([{ tbl: 'addons', id: row.id, field: 'removed', value: true }]); redraw(); const inp = $(`[data-addon="${CSS.escape(row.id)}"] .qty`); if (inp) inp.focus() } })
+    return
+  }
   if (P_.mode === 'line') {
     const l = IX.lines.get(P_.id)
     const pick = { item_id: o.kind === 'item' ? o.id : null, batch_id: o.kind === 'batch' ? o.id : null, not_counted: o.kind === 'notfrom', not_in_stock: o.kind === 'notin' }
@@ -659,7 +798,7 @@ function choose(o) {
     act([{ tbl: 'extras', id: P_.id, field: 'item_id', value: o.id }])
   } else if (P_.mode === 'slot' || P_.mode === 'newextra') {
     const slot = P_.mode === 'slot'
-    addRow('extras', { card_id: P_.card, action: 'add', item_id: o.id, slot: slot ? 'packaging' : null, rule_id: slot ? P_.rule : null, qty: 1, serve: slot ? 'take_away' : 'both' })
+    addRow('extras', { card_id: P_.card, action: 'add', item_id: o.id, slot: slot ? 'packaging' : null, rule_id: slot ? P_.rule : null, qty: 1, serve: slot ? 'take_away' : P_.serve || 'both' })
       .then((row) => { if (row) { showUndo([{ tbl: 'extras', id: row.id, field: 'removed', value: true }]); redraw() } })
   } else if (P_.mode === 'move') {
     act([{ tbl: 'cards', id: P_.id, field: 'heading_id', value: Number(o.id) }])
@@ -687,6 +826,21 @@ function choose(o) {
     }
     doit()
   }
+}
+/** "+ Add an option": the option is named from the stock item (Rename beside it), with that item as its first line. */
+async function newOption(P_, o) {
+  let name = o.kind === 'item' ? itemName(o.id) : o.kind === 'batch' ? (IX.recipes.get(o.id) || {}).name : null
+  if (o.kind === 'nostock') name = prompt('The option\'s name, as the app shows it (like Single)')
+  if (!name || !name.trim()) return
+  const opt = await addRow('options', { group_id: P_.group, name: name.trim() })
+  if (!opt) return redraw()
+  const undo = [{ tbl: 'options', id: opt.id, field: 'removed', value: true }]
+  if (o.kind === 'item' || o.kind === 'batch') {
+    const ln = await addRow('lines', { recipe_id: P_.recipeId, option_id: opt.id })
+    if (ln) act([{ tbl: 'lines', id: ln.id, field: 'pick', value: { item_id: o.kind === 'item' ? o.id : null, batch_id: o.kind === 'batch' ? o.id : null, not_counted: false, not_in_stock: false } }], { undoable: false })
+  }
+  showUndo(undo)
+  redraw()
 }
 function categoryOptions() {
   return SECTIONS.slice(1).flatMap((s) => s.headings.map((h) => ({ kind: 'cat', id: String(h), name: HEADINGS[h], sub: s.title, group: s.title })))
@@ -726,6 +880,7 @@ function onClick(e) {
     return
   }
   if (a === 'next') return goNext(id)
+  if (a === 'addon-open') { const ae = b.closest('[data-addon]'); const k = `${id}|${ae.dataset.addon}`; if (S.ao.has(k)) S.ao.delete(k); else S.ao.add(k); return drawCard(id) }
   if (a === 'yes') { const f = S.pendingYes; S.pendingYes = null; b.closest('.ask').remove(); if (f) f(); return }
   if (a === 'no') { S.pendingYes = null; b.closest('.ask').remove(); return }
   if (!S.canEdit) return
@@ -735,6 +890,12 @@ function onClick(e) {
   const kid = kidEl && IX.cards.get(kidEl.dataset.card)
   const exEl = b.closest('[data-extra]')
   const ex = exEl && IX.extras.get(exEl.dataset.extra)
+  const gEl = b.closest('[data-group]')
+  const grp = gEl && IX.groups.get(gEl.dataset.group)
+  const oEl = b.closest('[data-option]')
+  const opt = oEl && IX.options.get(oEl.dataset.option)
+  const aEl = b.closest('[data-addon]')
+  const ad = aEl && IX.addons.get(aEl.dataset.addon)
   const c = id && IX.cards.get(id)
   const r = id && IX.recipes.get(id)
   switch (a) {
@@ -742,6 +903,56 @@ function onClick(e) {
       return openPicker({ mode: 'line', id: l.id, for: srcText(l), batches: true, recipeId: l.recipe_id }, b)
     }
     case 'ok-line': return act([{ tbl: 'lines', id: l.id, field: 'confirmed', value: true }])
+    case 'ok-row': return act([{ tbl: b.dataset.tbl, id: b.dataset.id, field: 'confirmed', value: true }])
+    case 'group-menu': { if (S.gm.has(grp.id)) S.gm.delete(grp.id); else S.gm.add(grp.id); return drawCard(id) }
+    case 'group-rename': {
+      const v = prompt('The name the app shows for this choice', grp.name)
+      if (!v || !v.trim()) return
+      return act([{ tbl: 'groups', id: grp.id, field: 'name', value: v.trim().replace(/\s+/g, ' ') }, ...conf('groups', grp)])
+    }
+    case 'group-remove': return act([{ tbl: 'groups', id: grp.id, field: 'removed', value: true }], { label: 'remove' })
+    case 'group-back': return act([{ tbl: 'groups', id: grp.id, field: 'removed', value: false }])
+    case 'group-add': {
+      const v = prompt('The choice\'s name, as the app shows it (like Choose your milk)')
+      if (!v || !v.trim()) return
+      addRow('groups', { recipe_id: b.dataset.recipe, name: v.trim() }).then((row) => {
+        if (!row) return
+        showUndo([{ tbl: 'groups', id: row.id, field: 'removed', value: true }])
+        redraw()
+      })
+      return
+    }
+    case 'option-add': return openPicker({ mode: 'newoption', group: grp.id, recipeId: grp.recipe_id, for: `${grp.name}: a new option`, batches: true }, b)
+    case 'option-rename': {
+      const v = prompt('The option\'s name, as the app shows it', opt.name)
+      if (!v || !v.trim()) return
+      return act([{ tbl: 'options', id: opt.id, field: 'name', value: v.trim().replace(/\s+/g, ' ') }, ...conf('options', opt)])
+    }
+    case 'option-remove': {
+      const g = IX.groups.get(opt.group_id)
+      const left = liveOptions(g.id, D).filter((o) => o.id !== opt.id).length
+      const ch = [{ tbl: 'options', id: opt.id, field: 'removed', value: true }]
+      if ((g.max_pick ?? 1) > Math.max(1, left)) {
+        const mx = Math.max(1, left)
+        ch.unshift({ tbl: 'groups', id: g.id, field: 'pick', value: { min_pick: g.min_pick ?? 1, max_pick: mx, different: mx > 1 && !!g.different } })
+        status('note', `${g.name} now picks up to ${mx}: it has ${left} option${left === 1 ? '' : 's'}.`)
+      }
+      return act(ch, { label: 'remove' })
+    }
+    case 'option-back': return act([{ tbl: 'options', id: opt.id, field: 'removed', value: false }])
+    case 'optline-add': {
+      addRow('lines', { recipe_id: IX.groups.get(opt.group_id).recipe_id, option_id: opt.id }).then((row) => {
+        if (!row) return
+        showUndo([{ tbl: 'lines', id: row.id, field: 'removed', value: true }])
+        redraw()
+        const btn = $(`#ln-${CSS.escape(row.id)} .pk`)
+        if (btn) openPicker({ mode: 'line', id: row.id, for: `${opt.name}`, batches: true, recipeId: row.recipe_id }, btn)
+      })
+      return
+    }
+    case 'addon-add': return openPicker({ mode: 'addon', card: c.id, for: `Add-on for ${cardName(c)}`, recipes: true }, b)
+    case 'addon-open': { const k = `${id}|${ad.id}`; if (S.ao.has(k)) S.ao.delete(k); else S.ao.add(k); return drawCard(id) }
+    case 'addon-remove': return act([{ tbl: 'addons', id: ad.id, field: 'removed', value: true }], { label: 'remove' })
     case 'line-remove': return act([{ tbl: 'lines', id: l.id, field: 'removed', value: true }], { label: 'remove' })
     case 'line-back': return act([{ tbl: 'lines', id: l.id, field: 'removed', value: false }])
     case 'line-add': {
@@ -776,6 +987,7 @@ function onClick(e) {
     case 'flavour-back': return act([{ tbl: 'cards', id: kid.id, field: 'on_menu', value: true }])
     case 'made-recipe': {
       if (c.made_from === 'recipe') return
+      if (c.made_from === 'as_is' && c.item_id) S.carry.set(c.id, { item_id: c.item_id, qty: c.item_qty ?? 1 })
       const kids = D.cards.some((k) => k.parent_id === c.id)
       const rid = kids ? null : c.recipe_id || (c.prefill_made_from === 'recipe' ? c.prefill_recipe_id : null)
       return act([{ tbl: 'cards', id: c.id, field: 'made', value: { made_from: 'recipe', recipe_id: rid, item_id: null } }])
@@ -837,7 +1049,7 @@ function onClick(e) {
     case 'pick-extra': return openPicker({ mode: 'extra', id: ex.id, for: `Goes out with ${cardName(c)}`, packFirst: true }, b)
     case 'ok-extra': return act([{ tbl: 'extras', id: ex.id, field: 'confirmed', value: true }])
     case 'extra-remove': return act([{ tbl: 'extras', id: ex.id, field: 'removed', value: true }], { label: 'remove' })
-    case 'extra-add': return openPicker({ mode: 'newextra', card: c.id, for: `Goes out with ${cardName(c)}`, packFirst: true }, b)
+    case 'extra-add': return openPicker({ mode: 'newextra', card: c.id, serve: b.dataset.serve || 'both', for: `${b.dataset.serve === 'take_away' ? 'Take-away packaging' : 'Comes with'}: ${cardName(c)}`, packFirst: true }, b)
     case 'all-correct': {
       const saves = allCorrect(id, D)
       return act(saves.map((s) => ({ tbl: s.tbl, id: s.id, field: s.field, value: true })), { label: `(${saves.length})` })
@@ -869,9 +1081,11 @@ function onClick(e) {
     default:
   }
 }
+/** Changing something we filled in counts as checking it. */
+const conf = (tbl, row) => (seededOpen(row) ? [{ tbl, id: row.id, field: 'confirmed', value: true }] : [])
 function pickerClick(e) {
   const f = e.target.closest('[data-pk]')
-  if (f) return choose({ kind: { notin: 'notin', notfrom: 'notfrom', nosell: 'nosell' }[f.dataset.pk] })
+  if (f) return choose({ kind: { notin: 'notin', notfrom: 'notfrom', nosell: 'nosell', nostock: 'nostock' }[f.dataset.pk] })
   const o = e.target.closest('.pk-o')
   if (o && !o.disabled) return choose(S.P.list[Number(o.dataset.i)])
   if (e.target.closest('#pkClose')) closePicker()
@@ -890,7 +1104,9 @@ function onChange(e) {
       const sec = sectionOf((parent || k).heading_id)
       addRow('recipes', { name, cat: sec === 'drinks' ? 'Hot Drinks' : sec === 'cold' ? 'Cold Drinks' : HEADINGS[(parent || k).heading_id] || 'Midday Munch' }).then(async (rec) => {
         if (!rec) return redraw()
-        await addRow('lines', { recipe_id: rec.id })
+        const first = await addRow('lines', { recipe_id: rec.id })
+        const carry = S.carry.get(k.id)
+        if (first && carry) act([{ tbl: 'lines', id: first.id, field: 'pick', value: { item_id: carry.item_id, batch_id: null, not_counted: false, not_in_stock: false } }, { tbl: 'lines', id: first.id, field: 'qty', value: carry.qty }], { undoable: false })
         act([{ tbl: 'cards', id: k.id, field: 'made', value: { made_from: parent ? null : 'recipe', recipe_id: rec.id, item_id: null } }], { label: '' })
         S.undo = [...(S.undo || []), { tbl: 'recipes', id: rec.id, field: 'removed', value: true }]
       })
@@ -898,6 +1114,23 @@ function onChange(e) {
     }
     return act([{ tbl: 'cards', id: k.id, field: 'made', value: { made_from: parent ? null : 'recipe', recipe_id: el.value || null, item_id: null } }])
   }
+  if (el.dataset.act === 'usual') {
+    const o = IX.options.get(el.closest('[data-option]').dataset.option)
+    const others = D.options.filter((x) => x.group_id === o.group_id && x.id !== o.id && x.usual).map((x) => ({ tbl: 'options', id: x.id, field: 'usual', value: false }))
+    return act([{ tbl: 'options', id: o.id, field: 'usual', value: true }, ...others])
+  }
+  if (['group-max', 'group-min', 'group-diff'].includes(el.dataset.act)) {
+    const g = IX.groups.get(el.closest('[data-group]').dataset.group)
+    const cur = { min_pick: g.min_pick ?? 1, max_pick: g.max_pick ?? 1, different: !!g.different }
+    if (el.dataset.act === 'group-max') cur.max_pick = Number(el.value)
+    if (el.dataset.act === 'group-min') cur.min_pick = el.checked ? 1 : 0
+    if (el.dataset.act === 'group-diff') cur.different = el.checked
+    if (cur.max_pick < 2) cur.different = false
+    const n = liveOptions(g.id, D).length
+    if (cur.max_pick > Math.max(1, n)) { status('bad', `Not saved: this choice has only ${n} options.`); return drawCard(id) }
+    return act([{ tbl: 'groups', id: g.id, field: 'pick', value: cur }, ...conf('groups', g)])
+  }
+  if (el.dataset.price) return price(el)
   if (el.dataset.act === 'serve') { const ex = IX.extras.get(el.closest('[data-extra]').dataset.extra); return act([{ tbl: 'extras', id: ex.id, field: 'serve', value: el.value }]) }
   if (el.dataset.act === 'notes') return act([{ tbl: 'recipes', id, field: 'notes', value: el.value }])
   if (el.dataset.act === 'makes-word') {
@@ -919,10 +1152,33 @@ function onChange(e) {
   }
   if (el.dataset.qty || el.dataset.batch) return amount(el, true)
 }
+/** A price box (+R on an option, or an add-on's price): blank is not set, R0 is free. */
+function price(el) {
+  const v = parsePrice(el.value)
+  const box = el.parentElement
+  const err = box.querySelector('.err')
+  if (err) err.remove()
+  el.classList.remove('bad')
+  if (!v.ok) { el.classList.add('bad'); el.insertAdjacentHTML('afterend', `<span class="err">Not saved: ${esc(v.problem)}</span>`); return }
+  if (el.dataset.price === 'addons') {
+    const a = IX.addons.get(el.closest('[data-addon]').dataset.addon)
+    return act([{ tbl: 'addons', id: a.id, field: 'price', value: v.value }, ...conf('addons', a)])
+  }
+  const oid = el.closest('[data-option]').dataset.option
+  const cid = el.dataset.cardid
+  const k = chargeOf(cid, oid)
+  if (k) {
+    const ch = [{ tbl: 'card_options', id: k.id, field: 'extra', value: v.value }, ...conf('card_options', k)]
+    if (k.removed) ch.push({ tbl: 'card_options', id: k.id, field: 'removed', value: false })
+    return act(ch)
+  }
+  if (v.value === null) return
+  addRow('card_options', { card_id: cid, option_id: oid, extra: v.value }).then((row) => { if (row) { showUndo([{ tbl: 'card_options', id: row.id, field: 'removed', value: true }]); redraw() } })
+}
 /** An amount box: read the South African way, asked about when it could be read two ways, saved when it is plain. */
 function amount(el, final) {
   const v = parseAmount(el.value)
-  const box = el.closest('.l-pick, .row, .ex') || el.parentElement
+  const box = el.closest('.l-pick, .row, .ex, .ad') || el.parentElement
   const rb = box.querySelector('.rb')
   if (rb) rb.textContent = v.ok ? readBack(el.value) : ''
   const err = box.querySelector('.err')
@@ -941,6 +1197,7 @@ function amount(el, final) {
   if (el.dataset.qty === 'lines') { const l = IX.lines.get(el.closest('[data-line]').dataset.line); S.ask.delete(`lines|${l.id}`); return act([{ tbl: 'lines', id: l.id, field: 'qty', value: v.value }]) }
   if (el.dataset.qty === 'cards') { const k = IX.cards.get(el.closest('[data-card]').dataset.card); return act([{ tbl: 'cards', id: k.id, field: 'item_qty', value: v.value }]) }
   if (el.dataset.qty === 'extras') { const x = IX.extras.get(el.closest('[data-extra]').dataset.extra); return act([{ tbl: 'extras', id: x.id, field: 'qty', value: v.value }]) }
+  if (el.dataset.qty === 'addons') { const x = IX.addons.get(el.closest('[data-addon]').dataset.addon); return act([{ tbl: 'addons', id: x.id, field: 'qty', value: v.value }, ...conf('addons', x)]) }
   const word = cardEl.querySelector('[data-act="makes-word"]').value
   const base = toBase(v.value, word)
   const tooMuch = el.dataset.batch === 'makes' ? base !== null && base > MAX : base !== null && base >= MAX
@@ -1000,12 +1257,14 @@ function wire() {
 
 const FIELD_SAY = { pick: 'picked', qty: 'amount', confirmed: 'checked', removed: 'removed', name: 'renamed', heading_id: 'moved', on_menu: 'on the menu', made: 'made from',
   item_qty: 'how many', makes: 'one batch makes', make_at_base: 'make more when it gets to', notes: 'notes', kind: 'kind', grp: 'group', left_out: 'we don\'t make this',
-  we_make_this: 'we make this', active: 'for every card', item_id: 'picked', serve: 'when', added: 'added' }
+  we_make_this: 'we make this', active: 'for every card', item_id: 'picked', serve: 'when', added: 'added', usual: 'the usual', extra: 'amount added (Add R)', price: 'price', sort: 'order' }
 function said(c, v) {
   if (v === null || v === undefined || v === '') return '<i>blank</i>'
   if (c.field === 'pick') return esc(v.not_counted ? 'Not from stock' : v.not_in_stock ? 'Not in our stock yet' : v.batch_id ? `${(IX.recipes.get(v.batch_id) || {}).name} (batch)` : v.item_id ? itemName(v.item_id) : 'nothing')
   if (c.field === 'made') return esc(v.made_from === 'as_is' ? `Sold as it is${v.item_id ? `: ${itemName(v.item_id)}` : ''}` : v.made_from === 'recipe' || v.recipe_id ? `Recipe${v.recipe_id ? `: ${(IX.recipes.get(v.recipe_id) || {}).name}` : ''}` : v.item_id ? itemName(v.item_id) : 'not chosen')
   if (c.field === 'item_id') return esc(itemName(v))
+  if (c.tbl === 'groups' && c.field === 'pick') return esc(pickWords(v))
+  if (c.tbl === 'addons' && c.field === 'pick') return esc(v.recipe_id ? (IX.recipes.get(v.recipe_id) || {}).name : itemName(v.item_id))
   if (c.field === 'heading_id') return esc(HEADINGS[v] || 'No category yet')
   if (c.field === 'makes') return esc(v.qty === null ? 'blank' : `${showBase(v.qty, v.word)} ${v.word}`)
   if (typeof v === 'boolean') return v ? 'yes' : 'no'
@@ -1017,6 +1276,10 @@ function whereOf(c) {
   if (c.tbl === 'cards') { const k = IX.cards.get(c.row_id); if (!k) return c.row_id; const p = k.parent_id ? IX.cards.get(k.parent_id) : null; return p ? `${cardName(p)} (${k.flavour})` : cardName(k) }
   if (c.tbl === 'recipes') return (IX.recipes.get(c.row_id) || {}).name || c.row_id
   if (c.tbl === 'extras') { const x = IX.extras.get(c.row_id); const k = x && IX.cards.get(x.card_id); return `an extra on ${k ? cardName(k) : ''}` }
+  if (c.tbl === 'groups') { const g = IX.groups.get(c.row_id); const r = g && IX.recipes.get(g.recipe_id); return g ? `the ${g.name} choice on ${r ? r.name : ''}` : c.row_id }
+  if (c.tbl === 'options') { const o = IX.options.get(c.row_id); const g = o && IX.groups.get(o.group_id); return o ? `${g ? g.name : ''} option ${o.name}` : c.row_id }
+  if (c.tbl === 'card_options') { const k = IX.card_options.get(c.row_id); const o = k && IX.options.get(k.option_id); const cd = k && IX.cards.get(k.card_id); return k ? `amount added for ${o ? o.name : ''} on ${cd ? cardName(cd) : ''}` : c.row_id }
+  if (c.tbl === 'addons') { const a = IX.addons.get(c.row_id); const cd = a && IX.cards.get(a.card_id); return a ? `an add-on on ${cd ? cardName(cd) : ''}` : c.row_id }
   const r = IX.rules.get(c.row_id)
   return r ? `the rule for ${r.label}` : c.row_id
 }
@@ -1034,7 +1297,10 @@ function renderChanges(changes) {
 // ---------------------------------------------------------------- start
 
 function useData(d) {
-  D = { recipes: d.recipes, groups: d.groups, options: d.options, lines: d.lines, cards: d.cards, rules: d.rules, extras: d.extras, stock: d.stock }
+  D = { recipes: d.recipes, groups: d.groups || [], options: d.options || [], lines: d.lines, cards: d.cards, rules: d.rules, extras: d.extras, stock: d.stock,
+    card_options: d.card_options || [], addons: d.addons || [] }
+  for (const k of D.card_options) if (k.extra !== null && k.extra !== undefined) k.extra = Number(k.extra)
+  for (const a of D.addons) { if (a.qty !== null && a.qty !== undefined) a.qty = Number(a.qty); if (a.price !== null && a.price !== undefined) a.price = Number(a.price) }
   for (const l of D.lines) { if (l.qty !== null) l.qty = Number(l.qty); if (l.src_qty !== null) l.src_qty = Number(l.src_qty) }
   for (const c of D.cards) if (c.item_qty !== null) c.item_qty = Number(c.item_qty)
   for (const r of D.recipes) { if (r.makes_qty !== null) r.makes_qty = Number(r.makes_qty); if (r.make_at_base !== null) r.make_at_base = Number(r.make_at_base) }

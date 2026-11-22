@@ -176,3 +176,24 @@ textarea { width: 100%; min-height: 60px; border: 1px solid #d9cfc4; border-radi
   .picker .pk-list { max-height: 384px; }
   .scrim { background: transparent; }
 }
+
+/* 22/11 choices, add-ons and packaging: five parts on every card, each with what is left in it */
+.part { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 6px; border-top: 1px solid var(--line); padding-top: 10px; }
+.part .pc { font-family: Montserrat, system-ui, sans-serif; font-size: 13px; font-weight: 600; color: var(--gold); }
+.part .grey { font-family: Montserrat, system-ui, sans-serif; }
+.choice { margin: 8px 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 12px; background: #fffdfb; }
+.choice.gone, .opt-row.gone { opacity: .7; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.ch-head, .o-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-height: 44px; }
+.ch-head b { flex: 1 1 200px; min-width: 0; }
+.opt-row { padding: 6px 0 6px 8px; border-top: 1px dashed var(--line); }
+.o-name { flex: 1 1 140px; min-width: 0; overflow-wrap: anywhere; }
+.usual { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; font-size: 13px; color: var(--slate); cursor: pointer; }
+.usual input { width: 22px; height: 22px; accent-color: var(--accent); }
+.charge { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-height: 44px; font-size: 14px; color: var(--slate); }
+.charge label, .pr { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; color: var(--slate); }
+.price { width: 84px; }
+.gmenu select { min-width: 140px; }
+.ad { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 6px 0; border-top: 1px dashed var(--line); }
+.ad-n { flex: 1 1 200px; min-width: 0; overflow-wrap: anywhere; }
+.ad-rec { flex-basis: 100%; padding: 6px 10px; border-left: 3px solid var(--line); margin: 4px 0; }
+.c-new { display: block; margin-top: 4px; font-size: 13px; font-weight: 600; color: var(--gold); background: var(--goldWash); border-radius: 8px; padding: 4px 8px; }
