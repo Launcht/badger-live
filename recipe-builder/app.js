@@ -398,10 +398,7 @@ function asIsLine(c, k) {
       ${check ? `<span class="tag">We picked this${S.canEdit ? ' <button type="button" class="lnk" data-act="q-ok">Yes, that\'s right</button>' : ''}</span>` : ''}</div></div>`
 }
 function flavourBlock(c, k) {
-  if (k.on_menu === false) {
-    return `<div class="ln gone" data-card="${esc(k.id)}"><div class="l-src">${esc(cardName(c))} (${esc(k.flavour)})</div><div class="l-pick"><span class="grey">Not sold any more</span>
-      ${S.canEdit ? '<button type="button" class="lnk" data-act="flavour-back">Undo</button>' : ''}</div></div>`
-  }
+  if (k.on_menu === false) return '' // "We don't sell this one": off the page (Tarryn 22/11/2026)
   if (c.made_from === 'as_is') return asIsLine(c, k)
   const check = k.prefill_rule && !k.confirmed && k.recipe_id && k.recipe_id === k.prefill_recipe_id
   return `<div class="flav" data-card="${esc(k.id)}"><p class="h3">${esc(k.flavour)}</p>

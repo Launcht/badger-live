@@ -522,9 +522,10 @@ export function layout(D) {
     const groups = s.key === 'meals' ? [...s.headings, null] : s.headings
     for (const h of groups) {
       const here = top.filter((c) => (h === null ? c.heading_id === null || c.heading_id === undefined : Number(c.heading_id) === h))
+      // A card she marked "We don't sell this" leaves the page and the count (Tarryn 22/11/2026).
+      // The row stays in the database, so the mark can be undone there.
       const on = here.filter((c) => c.on_menu !== false).sort(byMenu)
-      const off = here.filter((c) => c.on_menu === false).sort(byMenu)
-      for (const c of [...on, ...off]) out.push({ id: c.id, section: s.key, group: h === null ? 'none' : String(h), kind: 'card' })
+      for (const c of on) out.push({ id: c.id, section: s.key, group: h === null ? 'none' : String(h), kind: 'card' })
     }
     const mine = st.filter((r) => sectionOfCat(r.cat) === s.key)
     for (const r of mine.filter((x) => !x.not_made_yet).sort(byName)) out.push({ id: r.id, section: s.key, group: 'stray', kind: 'stray' })
